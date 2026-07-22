@@ -1198,6 +1198,10 @@ h2 {
   color: #79877e;
 }
 
+.result-placeholder[hidden] {
+  display: none;
+}
+
 .result-placeholder strong {
   margin-bottom: 5px;
   color: #a9b4ad;
