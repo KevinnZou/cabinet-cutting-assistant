@@ -9,7 +9,7 @@
     />
     <meta name="theme-color" content="#14271e" />
     <title>开料工作台｜柜体板开料计算助手</title>
-    <link rel="stylesheet" href="./app.css?v=20260722-2" />
+    <link rel="stylesheet" href="./app.css?v=20260722-3" />
   </head>
   <body>
     <header class="topbar">
@@ -28,7 +28,7 @@
         <div>
           <span class="section-kicker">LOCAL CUTTING WORKSPACE</span>
           <h1 id="page-title">把板件清单，变成可执行的排版结果</h1>
-          <p>录入尺寸与封边要求，按本厂规则计算板材张数、封边用量和每张板的放置位置。</p>
+          <p>直接粘贴客户清单、报价单文字或 OCR 结果，先自动解析成板件表，再按本厂规则计算板材张数、封边用量和排版位置。</p>
         </div>
         <div class="project-tools">
           <label class="project-name">
@@ -44,10 +44,56 @@
         </div>
       </section>
 
+      <section class="parser-card" aria-labelledby="parser-title">
+        <div class="card-heading parser-heading">
+          <div class="heading-left">
+            <span class="step-number">01</span>
+            <div>
+              <h2 id="parser-title">粘贴文字清单，自动解析</h2>
+              <p>支持尺寸、数量、颜色/材质、木纹、封边混写；解析后进入表格二次确认。</p>
+            </div>
+          </div>
+          <div class="parser-actions">
+            <button class="text-button" id="parser-example-button" type="button">填入解析示例</button>
+            <button class="button subtle" id="clear-raw-button" type="button">清空</button>
+          </div>
+        </div>
+        <div class="parser-grid">
+          <label class="raw-input-wrap">
+            <span>文字清单 / OCR 结果</span>
+            <textarea
+              id="raw-input"
+              rows="10"
+              spellcheck="false"
+              placeholder="例如：&#10;颜色：卡其灰&#10;侧板 2440x550 2片 木纹 单长边&#10;层板 长760 宽520 数量4 四边封"
+            ></textarea>
+          </label>
+          <div class="parser-side">
+            <div class="parser-rule-list">
+              <strong>可识别写法</strong>
+              <span>2440x550x2、2440 × 550 2片</span>
+              <span>长2440 宽550 数量2</span>
+              <span>颜色：卡其灰 / 材质：暖白</span>
+              <span>木纹、顺纹、可旋转、四边封、封边1/0</span>
+            </div>
+            <label class="check-row append-row">
+              <input id="append-parse" type="checkbox" />
+              <span><b>追加到现有清单</b><small>关闭时会用解析结果覆盖当前板件表。</small></span>
+            </label>
+            <button class="button primary wide" id="parse-button" type="button">
+              <span>解析到确认表</span><b>→</b>
+            </button>
+            <div class="parse-feedback" id="parse-feedback" aria-live="polite">
+              粘贴后点击解析，系统会先生成可编辑清单。
+            </div>
+          </div>
+        </div>
+      </section>
+
       <div class="workspace-grid">
         <aside class="rules-card" aria-labelledby="rules-title">
           <div class="card-heading">
-            <span class="step-number">01</span>
+            <span class="step-number">02</span>
             <div><h2 id="rules-title">计算规则</h2><p>按你的设备和板材修改</p></div>
           </div>
 
@@ -86,8 +132,8 @@
         <section class="parts-card" aria-labelledby="parts-title">
           <div class="card-heading row-heading">
             <div class="heading-left">
-              <span class="step-number">02</span>
-              <div><h2 id="parts-title">板件清单</h2><p id="parts-summary">0 种板件 · 0 片</p></div>
+              <span class="step-number">03</span>
+              <div><h2 id="parts-title">板件确认表</h2><p id="parts-summary">0 种板件 · 0 片</p></div>
             </div>
             <div class="table-actions">
               <button class="text-button" id="sample-button" type="button">载入示例</button>
@@ -96,7 +142,7 @@
           </div>
 
           <div class="table-help">
-            <span>尺寸按“长 × 宽”录入；木纹锁定后，长边沿标准板长度方向。</span>
+            <span>解析结果会进入这里复核；尺寸按“长 × 宽”录入，木纹锁定后长边沿标准板长度方向。</span>
             <span>封边可分别设置长边、短边的边数。</span>
           </div>
 
@@ -132,7 +178,7 @@
       <section class="results-section" id="results" aria-labelledby="results-title">
         <div class="results-head">
           <div class="card-heading">
-            <span class="step-number">03</span>
+            <span class="step-number">04</span>
             <div><h2 id="results-title">计算结果</h2><p id="result-caption">结果仅在当前设备生成</p></div>
           </div>
           <div class="result-actions" id="result-actions" hidden>
@@ -163,6 +209,6 @@
     </footer>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="./app.js?v=20260722-2"></script>
+    <script type="module" src="./app.js?v=20260722-3"></script>
   </body>
 </html>
