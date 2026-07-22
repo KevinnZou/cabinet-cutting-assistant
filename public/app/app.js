@@ -5,6 +5,7 @@ import {
   normalizeSettings,
   optimizeCutting,
 } from "./optimizer.js";
+import { createParserExample, parsePartsText } from "./parser.js";
 
 const STORAGE_KEY = "cabinet-cutting-assistant:project:v1";
 const COLOR_PALETTE = ["#c5ec56", "#93c6a8", "#f0bc62", "#8fb8e8", "#d6a6e8", "#e7987f", "#aabf77"];
@@ -26,6 +27,10 @@ const elements = {
   resultActions: document.getElementById("result-actions"),
   resultCaption: document.getElementById("result-caption"),
   importFile: document.getElementById("import-file"),
+  rawInput: document.getElementById("raw-input"),
+  parseButton: document.getElementById("parse-button"),
+  appendParse: document.getElementById("append-parse"),
+  parseFeedback: document.getElementById("parse-feedback"),
   toast: document.getElementById("toast"),
 };
 
@@ -184,6 +189,57 @@ function resetResults() {
   elements.resultContent.hidden = true;
   elements.resultActions.hidden = true;
   elements.resultCaption.textContent = "结果仅在当前设备生成";
+}
+
+function renderParseFeedback(result) {
+  const warnings = result.warnings.slice(0, 3);
+  const warningHtml = warnings.length
+    ? `<ul>${warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join("")}</ul>`
+    : "";
+  elements.parseFeedback.innerHTML = `
+    <strong>已识别 ${result.stats.partTypeCount} 种板件 / ${result.stats.pieceCount} 片</strong>
+    <span>请在下方确认尺寸、颜色、木纹和封边，再开始计算。</span>
+    ${warningHtml}
+    ${result.warnings.length > warnings.length ? `<small>另有 ${result.warnings.length - warnings.length} 行未展示。</small>` : ""}
+  `;
+  elements.parseFeedback.classList.toggle("has-warning", result.warnings.length > 0);
+}
+
+function parseRawInput() {
+  const raw = elements.rawInput.value.trim();
+  if (!raw) {
+    showToast("请先粘贴文字清单");
+    elements.rawInput.focus();
+    return;
+  }
+
+  const result = parsePartsText(raw);
+  if (!result.parts.length) {
+    renderParseFeedback(result);
+    showToast("没有识别到板件尺寸，请检查文字格式");
+    return;
+  }
+
+  const parsedParts = result.parts.map((part) =>
+    newPart({
+      name: part.name,
+      material: part.material,
+      length: part.length,
+      width: part.width,
+      quantity: part.quantity,
+      grainLocked: part.grainLocked,
+      edgeLong: part.edgeLong,
+      edgeShort: part.edgeShort,
+    }),
+  );
+
+  state.parts = elements.appendParse.checked ? [...state.parts, ...parsedParts] : parsedParts;
+  renderParts();
+  resetResults();
+  renderParseFeedback(result);
+  saveState();
+  document.getElementById("parts-title").scrollIntoView({ behavior: "smooth", block: "start" });
+  showToast(`已生成 ${result.stats.partTypeCount} 种板件，请二次确认`);
 }
 
 function updateStateFromPartInput(target) {
@@ -428,6 +484,21 @@ document.getElementById("sample-button").addEventListener("click", () => {
   saveState({ immediate: true });
   showToast("已载入 1 张标准板的示例数据");
 });
+
+document.getElementById("parser-example-button").addEventListener("click", () => {
+  elements.rawInput.value = createParserExample();
+  elements.rawInput.focus();
+  showToast("已填入一段混合格式清单");
+});
+
+document.getElementById("clear-raw-button").addEventListener("click", () => {
+  elements.rawInput.value = "";
+  elements.parseFeedback.textContent = "粘贴后点击解析，系统会先生成可编辑清单。";
+  elements.parseFeedback.classList.remove("has-warning");
+  elements.rawInput.focus();
+});
+
+elements.parseButton.addEventListener("click", parseRawInput);
 
 elements.partsBody.addEventListener("input", (event) => updateStateFromPartInput(event.target));
 elements.partsBody.addEventListener("change", (event) => updateStateFromPartInput(event.target));
