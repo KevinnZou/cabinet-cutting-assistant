@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="纯浏览器运行的柜体板开料计算助手：本地录入板件、计算板材与封边用量，并生成排版图。"
+    />
+    <meta name="theme-color" content="#14271e" />
+    <title>开料工作台｜柜体板开料计算助手</title>
+    <link rel="stylesheet" href="./app.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="./" aria-label="开料助手首页">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span><strong>开料助手</strong><small>Cabinet Cutting</small></span>
+      </a>
+      <div class="topbar-actions">
+        <span class="local-badge"><i></i> 数据仅保存在本机</span>
+        <a class="quiet-link" href="../intro/">产品介绍</a>
+      </div>
+    </header>
+
+    <main class="page-shell">
+      <section class="workspace-head" aria-labelledby="page-title">
+        <div>
+          <span class="section-kicker">LOCAL CUTTING WORKSPACE</span>
+          <h1 id="page-title">把板件清单，变成可执行的排版结果</h1>
+          <p>录入尺寸与封边要求，按本厂规则计算板材张数、封边用量和每张板的放置位置。</p>
+        </div>
+        <div class="project-tools">
+          <label class="project-name">
+            <span>项目名称</span>
+            <input id="project-name" type="text" maxlength="50" value="新建柜体项目" />
+          </label>
+          <div class="file-actions">
+            <button class="button subtle" id="import-button" type="button">导入项目</button>
+            <button class="button subtle" id="export-button" type="button">导出项目</button>
+            <input id="import-file" type="file" accept="application/json,.json" hidden />
+          </div>
+          <span class="save-status" id="save-status">已保存到本机</span>
+        </div>
+      </section>
+
+      <div class="workspace-grid">
+        <aside class="rules-card" aria-labelledby="rules-title">
+          <div class="card-heading">
+            <span class="step-number">01</span>
+            <div><h2 id="rules-title">计算规则</h2><p>按你的设备和板材修改</p></div>
+          </div>
+
+          <div class="rule-group">
+            <h3>标准板规格</h3>
+            <div class="field-grid two">
+              <label><span>板长 <em>mm</em></span><input data-setting="boardHeight" type="number" min="100" max="10000" step="1" /></label>
+              <label><span>板宽 <em>mm</em></span><input data-setting="boardWidth" type="number" min="100" max="10000" step="1" /></label>
+            </div>
+          </div>
+
+          <div class="rule-group">
+            <h3>加工余量</h3>
+            <div class="field-grid two">
+              <label><span>锯缝 <em>mm</em></span><input data-setting="kerf" type="number" min="0" max="30" step="0.1" /></label>
+              <label><span>四边修边 <em>mm</em></span><input data-setting="trim" type="number" min="0" max="100" step="0.5" /></label>
+            </div>
+          </div>
+
+          <div class="rule-group">
+            <h3>封边领料</h3>
+            <label class="full-field"><span>封边损耗 <em>%</em></span><input data-setting="edgeLoss" type="number" min="0" max="100" step="0.5" /></label>
+            <label class="check-row"><input data-setting="roundEdgeBand" type="checkbox" /><span><b>按整米向上取整</b><small>适合直接生成领料数量</small></span></label>
+          </div>
+
+          <div class="rule-group compact">
+            <label class="check-row"><input data-setting="allowRotation" type="checkbox" /><span><b>无纹理板件允许旋转</b><small>锁定木纹的板件始终保持方向</small></span></label>
+          </div>
+
+          <div class="rule-note">
+            <strong>排版口径</strong>
+            <p>采用本地二维矩形启发式排版，优先减少短边余量。它会给出稳定可执行的方案，但不承诺数学上的全局最优。</p>
+          </div>
+        </aside>
+
+        <section class="parts-card" aria-labelledby="parts-title">
+          <div class="card-heading row-heading">
+            <div class="heading-left">
+              <span class="step-number">02</span>
+              <div><h2 id="parts-title">板件清单</h2><p id="parts-summary">0 种板件 · 0 片</p></div>
+            </div>
+            <div class="table-actions">
+              <button class="text-button" id="sample-button" type="button">载入示例</button>
+              <button class="button dark" id="add-part-button" type="button"><span>＋</span> 添加板件</button>
+            </div>
+          </div>
+
+          <div class="table-help">
+            <span>尺寸按“长 × 宽”录入；木纹锁定后，长边沿标准板长度方向。</span>
+            <span>封边可分别设置长边、短边的边数。</span>
+          </div>
+
+          <div class="parts-table-wrap">
+            <table class="parts-table">
+              <thead>
+                <tr>
+                  <th>板件 / 颜色</th>
+                  <th>长 × 宽（mm）</th>
+                  <th>数量</th>
+                  <th>木纹</th>
+                  <th>封长边</th>
+                  <th>封短边</th>
+                  <th><span class="sr-only">删除</span></th>
+                </tr>
+              </thead>
+              <tbody id="parts-body"></tbody>
+            </table>
+          </div>
+
+          <div class="calculate-bar">
+            <div>
+              <strong id="calculation-ready">准备计算</strong>
+              <span id="rule-summary">标准板 1220 × 2440 mm · 锯缝 3 mm</span>
+            </div>
+            <button class="button primary" id="calculate-button" type="button">
+              <span>开始排版计算</span><b>→</b>
+            </button>
+          </div>
+        </section>
+      </div>
+
+      <section class="results-section" id="results" aria-labelledby="results-title">
+        <div class="results-head">
+          <div class="card-heading">
+            <span class="step-number">03</span>
+            <div><h2 id="results-title">计算结果</h2><p id="result-caption">结果仅在当前设备生成</p></div>
+          </div>
+          <div class="result-actions" id="result-actions" hidden>
+            <button class="button subtle" id="csv-button" type="button">导出清单 CSV</button>
+            <button class="button subtle" id="print-button" type="button">打印结果</button>
+          </div>
+        </div>
+
+        <div class="result-placeholder" id="result-placeholder">
+          <div class="empty-board" aria-hidden="true"><i></i><i></i><i></i></div>
+          <strong>排版图将在这里生成</strong>
+          <p>确认板件和规则后，点击“开始排版计算”。</p>
+        </div>
+
+        <div class="result-content" id="result-content" hidden>
+          <div class="result-stats" id="result-stats"></div>
+          <div class="result-alerts" id="result-alerts"></div>
+          <div class="sheet-list" id="sheet-list"></div>
+          <div class="calculation-notes" id="calculation-notes"></div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <span>柜体板开料计算助手</span>
+      <p>本工具在浏览器本地运行；正式下单前请复核尺寸、纹理和设备加工余量。</p>
+      <a href="../intro/">查看产品介绍 →</a>
+    </footer>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
