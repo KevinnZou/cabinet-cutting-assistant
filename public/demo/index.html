@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="柜体板开料计算助手：识别加工单，自动计算板材张数、封边米数并生成排版结果。"
+    />
+    <meta name="theme-color" content="#f4f7f3" />
+    <title>柜体板开料计算助手</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container nav-wrap">
+        <a class="brand" href="#top" aria-label="返回首页">
+          <span class="brand-mark" aria-hidden="true">
+            <i></i><i></i><i></i>
+          </span>
+          <span>柜体板开料计算助手</span>
+        </a>
+        <button class="menu-button" type="button" aria-label="打开导航" aria-expanded="false">
+          <span></span><span></span>
+        </button>
+        <nav class="nav-links" aria-label="主导航">
+          <a href="#features">核心功能</a>
+          <a href="#ocr">识别流程</a>
+          <a href="#rules">计算规则</a>
+          <a class="nav-cta" href="#example">查看示例</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="top">
+      <section class="hero section-pad">
+        <div class="hero-glow glow-one"></div>
+        <div class="hero-glow glow-two"></div>
+        <div class="container hero-grid">
+          <div class="hero-copy reveal">
+            <div class="eyebrow"><span></span> 面向板材开单与加工场景</div>
+            <h1>从一张加工单，<br />到可执行的<span>开料结果</span></h1>
+            <p class="hero-text">
+              自动识别板件尺寸、数量和封边要求，结合木纹方向、锯缝与损耗规则，快速输出板材张数、封边米数和排版方案。
+            </p>
+            <div class="hero-actions">
+              <a class="button primary" href="#example">查看计算示例 <span>→</span></a>
+              <a class="button secondary" href="#ocr">了解 OCR 流程</a>
+            </div>
+            <ul class="hero-specs" aria-label="默认计算参数">
+              <li><strong>1220 × 2440</strong><span>标准板尺寸</span></li>
+              <li><strong>3 mm</strong><span>默认锯缝</span></li>
+              <li><strong>3%</strong><span>封边损耗</span></li>
+            </ul>
+          </div>
+
+          <div class="hero-visual reveal reveal-delay" aria-label="加工单识别与开料排版示意">
+            <div class="scan-card">
+              <div class="card-head">
+                <div>
+                  <span class="mini-label">OCR 识别结果</span>
+                  <strong>卡其灰 · 加工单</strong>
+                </div>
+                <span class="status"><i></i> 已结构化</span>
+              </div>
+              <div class="scan-lines">
+                <div><span>2440 × 550</span><b>2 片</b><em>单边</em></div>
+                <div><span>2440 × 110</span><b>1 片</b><em>单边</em></div>
+              </div>
+            </div>
+
+            <div class="layout-card">
+              <div class="card-head compact">
+                <div>
+                  <span class="mini-label">智能排版</span>
+                  <strong>标准板 #01</strong>
+                </div>
+                <span class="scale">1220 × 2440 mm</span>
+              </div>
+              <div class="board-preview" aria-hidden="true">
+                <div class="board-piece piece-a"><span>550</span></div>
+                <div class="cut-line"></div>
+                <div class="board-piece piece-b"><span>550</span></div>
+                <div class="cut-line"></div>
+                <div class="board-piece piece-c"><span>110</span></div>
+              </div>
+              <div class="layout-foot">
+                <div><span>板材</span><strong>1 张</strong></div>
+                <div><span>封边</span><strong>8 米</strong></div>
+                <div><span>利用率</span><strong>99.2%</strong></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="features" class="features section-pad">
+        <div class="container">
+          <div class="section-heading reveal">
+            <div>
+              <span class="section-kicker">CORE FEATURES</span>
+              <h2>把复杂开单，拆成四个简单动作</h2>
+            </div>
+            <p>减少人工抄单和重复核算，让开单员把时间留给结果确认。</p>
+          </div>
+          <div class="feature-grid">
+            <article class="feature-card reveal">
+              <span class="feature-no">01</span>
+              <div class="feature-icon icon-scan" aria-hidden="true"><i></i></div>
+              <h3>加工单 OCR 识别</h3>
+              <p>支持照片、截图和手写加工单，提取颜色、尺寸、数量与备注信息。</p>
+            </article>
+            <article class="feature-card reveal">
+              <span class="feature-no">02</span>
+              <div class="feature-icon icon-structure" aria-hidden="true"><i></i><i></i><i></i></div>
+              <h3>结构与语义理解</h3>
+              <p>识别括号、合并标注和封边说明，将零散内容整理成标准板件清单。</p>
+            </article>
+            <article class="feature-card reveal">
+              <span class="feature-no">03</span>
+              <div class="feature-icon icon-calc" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+              <h3>板材与封边计算</h3>
+              <p>根据板材尺寸、木纹方向、锯缝和损耗，计算用板张数与封边米数。</p>
+            </article>
+            <article class="feature-card reveal">
+              <span class="feature-no">04</span>
+              <div class="feature-icon icon-layout" aria-hidden="true"><i></i><i></i><i></i></div>
+              <h3>排版结果可视化</h3>
+              <p>直观看到每张板的切割分布、余料位置与利用率，方便加工前复核。</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="ocr" class="workflow section-pad">
+        <div class="container workflow-grid">
+          <div class="workflow-copy reveal">
+            <span class="section-kicker">OCR WORKFLOW</span>
+            <h2>不只“识字”，还要读懂加工单</h2>
+            <p>
+              普通 OCR 只能得到一串文字。助手会继续理解表格关系、括号范围和封边备注，并在计算前保留人工确认环节。
+            </p>
+            <div class="note-card">
+              <span>重点处理</span>
+              <strong>尺寸 × 数量 · 大括号归属 · 封边范围 · 余料要求</strong>
+            </div>
+          </div>
+          <ol class="workflow-list">
+            <li class="reveal">
+              <span>01</span>
+              <div><h3>上传加工单</h3><p>拍照、截图或导入已有单据。</p></div>
+              <i>JPG / PNG</i>
+            </li>
+            <li class="reveal">
+              <span>02</span>
+              <div><h3>文字与表格识别</h3><p>提取尺寸、数量、颜色及说明。</p></div>
+              <i>OCR</i>
+            </li>
+            <li class="reveal">
+              <span>03</span>
+              <div><h3>结构化理解</h3><p>匹配括号关系与封边作用范围。</p></div>
+              <i>AI</i>
+            </li>
+            <li class="reveal">
+              <span>04</span>
+              <div><h3>确认后计算</h3><p>人工校对清单，再生成用量与排版。</p></div>
+              <i>CHECK</i>
+            </li>
+          </ol>
+        </div>
+      </section>
+
+      <section id="rules" class="rules section-pad">
+        <div class="container">
+          <div class="section-heading narrow reveal">
+            <div>
+              <span class="section-kicker">CALCULATION RULES</span>
+              <h2>每个结果，都有清楚的计算口径</h2>
+            </div>
+            <p>以下为默认规则，实际使用时可按工厂设备与开单习惯调整。</p>
+          </div>
+          <div class="rules-panel reveal">
+            <div class="rule-list">
+              <button class="rule-item active" type="button" data-rule="board">
+                <span>01</span><div><strong>板材规格</strong><small>标准大板</small></div><b>1220 × 2440 mm</b>
+              </button>
+              <button class="rule-item" type="button" data-rule="grain">
+                <span>02</span><div><strong>木纹方向</strong><small>默认方向约束</small></div><b>沿 2440 mm</b>
+              </button>
+              <button class="rule-item" type="button" data-rule="kerf">
+                <span>03</span><div><strong>切割锯缝</strong><small>相邻板件预留</small></div><b>3 mm</b>
+              </button>
+              <button class="rule-item" type="button" data-rule="edge">
+                <span>04</span><div><strong>封边计算</strong><small>损耗后向上取整</small></div><b>+3% · 整米</b>
+              </button>
+              <button class="rule-item" type="button" data-rule="strip">
+                <span>05</span><div><strong>条子料</strong><small>默认整条长度</small></div><b>2440 mm</b>
+              </button>
+            </div>
+            <div class="rule-detail" aria-live="polite">
+              <div class="rule-detail-head"><span>当前规则</span><i>可配置</i></div>
+              <h3 id="rule-title">标准板规格</h3>
+              <p id="rule-description">默认按 1220 × 2440 mm 计算。每张板会扣除实际锯缝，并按板件尺寸与方向寻找更优组合。</p>
+              <div class="dimension-figure" id="rule-visual" aria-hidden="true">
+                <span class="dim-top">1220 mm</span>
+                <span class="dim-side">2440 mm</span>
+                <div class="dimension-board"><i></i><i></i><i></i></div>
+              </div>
+              <p class="rule-tip"><span>!</span> 单边、双边、三边、四边及余料封边均可单独配置。</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="example" class="example section-pad">
+        <div class="container">
+          <div class="section-heading light reveal">
+            <div>
+              <span class="section-kicker">WORKED EXAMPLE</span>
+              <h2>看一张单，怎么算出最终结果</h2>
+            </div>
+            <p>以标准板、3 mm 锯缝和 3% 封边损耗为例。</p>
+          </div>
+
+          <div class="example-shell reveal">
+            <div class="example-input">
+              <div class="example-label"><span>01</span><div><strong>识别后的板件清单</strong><small>卡其灰 · 全部单边封边</small></div></div>
+              <div class="code-block" aria-label="加工单示例">
+                <div><span>颜色</span><b>卡其灰</b></div>
+                <div><span>板件 A</span><b>2440 × 550 mm</b><em>× 2</em></div>
+                <div><span>板件 B</span><b>2440 × 110 mm</b><em>× 1</em></div>
+                <div><span>封边</span><b>全部单边</b></div>
+              </div>
+              <button class="calculate-button" type="button">
+                <span class="button-label">开始计算</span>
+                <i aria-hidden="true">→</i>
+              </button>
+              <p class="example-hint">这是展示示例，不会上传或保存任何文件。</p>
+            </div>
+
+            <div class="example-result" aria-live="polite">
+              <div class="result-placeholder">
+                <div class="placeholder-grid"><i></i><i></i><i></i></div>
+                <strong>计算结果将在这里显示</strong>
+                <span>点击左侧按钮运行示例</span>
+              </div>
+              <div class="result-content" hidden>
+                <div class="result-head">
+                  <div><span class="result-dot"></span><strong>计算完成</strong></div>
+                  <small>默认规则</small>
+                </div>
+                <div class="result-metrics">
+                  <div><span>板材用量</span><strong>1<small>张</small></strong></div>
+                  <div><span>封边用量</span><strong>8<small>米</small></strong></div>
+                  <div><span>板材利用率</span><strong>99.2<small>%</small></strong></div>
+                </div>
+                <div class="result-layout">
+                  <div class="result-board">
+                    <div class="result-piece rp-a"><span>550</span></div>
+                    <div class="result-saw"></div>
+                    <div class="result-piece rp-b"><span>550</span></div>
+                    <div class="result-saw"></div>
+                    <div class="result-piece rp-c"><span>110</span></div>
+                  </div>
+                  <div class="legend"><span><i></i>有效板件</span><span><i></i>3 mm 锯缝</span><span><i></i>4 mm 余量</span></div>
+                </div>
+                <div class="formula">( 2.44 × 3 × 1.03 ) 向上取整 = <strong>8 米封边</strong></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="final-cta">
+        <div class="container cta-inner reveal">
+          <div>
+            <span class="section-kicker">CABINET CUTTING ASSISTANT</span>
+            <h2>让每一张加工单，更快得到可靠答案。</h2>
+          </div>
+          <a class="button primary" href="#top">返回顶部 <span>↑</span></a>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="container footer-inner">
+        <span>柜体板开料计算助手</span>
+        <p>计算规则可配置，正式下单前请由开单员复核。</p>
+        <span>© <b id="year"></b></span>
+      </div>
+    </footer>
+
+    <script src="./script.js"></script>
+  </body>
+</html>
