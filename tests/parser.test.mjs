@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createParserExample, parsePartsText } from "../public/app/parser.js";
+import {
+  createParserExample,
+  createParserExampleByType,
+  parsePartsText,
+} from "../public/app/parser.js";
 
 test("解析混合自然语言清单为可确认板件", () => {
   const result = parsePartsText(createParserExample());
@@ -51,4 +55,49 @@ test("无法识别的行返回提示但不中断解析", () => {
 
   assert.equal(result.parts.length, 1);
   assert.equal(result.warnings.length, 1);
+});
+
+test("支持柜体开料单常见厘米简写和后置全单边", () => {
+  const result = parsePartsText(createParserExampleByType("cabinet"));
+
+  assert.equal(result.parts.length, 4);
+  assert.equal(result.stats.pieceCount, 48);
+  assert.deepEqual(
+    result.parts.map((part) => [part.material, part.length, part.width, part.quantity, part.edgeLong, part.edgeShort]),
+    [
+      ["深秋胡桃", 2440, 550, 29, 1, 0],
+      ["深秋胡桃", 2440, 200, 9, 1, 0],
+      ["深秋胡桃", 2440, 110, 7, 1, 0],
+      ["深秋胡桃", 2440, 350, 3, 1, 0],
+    ],
+  );
+});
+
+test("支持冒号条子料写法并默认长度 2440", () => {
+  const result = parsePartsText(createParserExampleByType("strip"));
+
+  assert.equal(result.parts.length, 4);
+  assert.equal(result.parts[0].name, "条子 540");
+  assert.equal(result.parts[0].material, "黑色免漆板");
+  assert.equal(result.parts[0].length, 2440);
+  assert.equal(result.parts[0].width, 540);
+  assert.equal(result.parts[0].quantity, 6);
+  assert.equal(result.parts[0].edgeLong, 1);
+  assert.equal(result.parts[3].width, 110);
+  assert.equal(result.parts[3].quantity, 24);
+});
+
+test("前置全局封边规则会套用到后续板件", () => {
+  const result = parsePartsText(`
+材质:卡其灰
+全封边
+门板 2100x395 2件 木纹
+抽面 800x180 3片
+`);
+
+  assert.equal(result.parts.length, 2);
+  assert.equal(result.parts[0].edgeLong, 2);
+  assert.equal(result.parts[0].edgeShort, 2);
+  assert.equal(result.parts[1].edgeLong, 2);
+  assert.equal(result.parts[1].edgeShort, 2);
 });
