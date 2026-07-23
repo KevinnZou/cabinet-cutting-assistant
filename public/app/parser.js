@@ -1,4 +1,8 @@
 const MATERIAL_KEYS = ["颜色", "色号", "材质", "板材", "饰面", "花色"];
+const DEFAULT_PARSE_OPTIONS = Object.freeze({
+  defaultMaterial: "未分类",
+  defaultStripLength: 2440,
+});
 const NAME_STOP_WORDS = new Set([
   "长",
   "宽",
@@ -42,7 +46,25 @@ function normalizeDimensionUnit(value, unit) {
   return Math.round(number);
 }
 
+function normalizeCompactDimensions(lengthValue, lengthUnit, widthValue, widthUnit) {
+  const rawLength = toNumber(lengthValue);
+  const rawWidth = toNumber(widthValue);
+  if (!lengthUnit && !widthUnit && rawLength > 0 && rawLength <= 300 && rawWidth > 0 && rawWidth <= 130) {
+    return {
+      length: Math.round(rawLength * 10),
+      width: Math.round(rawWidth * 10),
+    };
+  }
+  return {
+    length: normalizeDimensionUnit(lengthValue, lengthUnit),
+    width: normalizeDimensionUnit(widthValue, widthUnit),
+  };
+}
+
 function parseCount(line) {
+  const equalCount = line.match(/(?:^|[:=\s])\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米)?\s*=\s*(\d+)\s*(?:片|块|件|个|pcs?|张)?/i);
+  if (equalCount) return Math.max(1, Math.floor(toNumber(equalCount[1], 1)));
+
   const afterSize = line.match(/\b\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|m|米)?\s*x\s*\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|m|米)?\s*(?:x|×|\*)\s*(\d+)\s*(?:片|块|件|个|pcs?|张)?/i);
   if (afterSize) return Math.max(1, Math.floor(toNumber(afterSize[1], 1)));
 
@@ -70,12 +92,23 @@ function parseSize(line) {
     return { length: first, width: second, raw: match[0] };
   }
 
-  const compact = line.match(/\b(\d+(?:\.\d+)?)\s*(mm|毫米|cm|厘米|m|米)?\s*[x*]\s*(\d+(?:\.\d+)?)\s*(mm|毫米|cm|厘米|m|米)?\b/i);
+  const compact = line.match(/(?:^|[^\d.])(\d+(?:\.\d+)?)\s*(mm|毫米|cm|厘米|m|米)?\s*[x*]\s*(\d+(?:\.\d+)?)\s*(mm|毫米|cm|厘米|m|米)?(?=$|[^\d.]|[x*]\d)/i);
   if (compact) {
+    const size = normalizeCompactDimensions(compact[1], compact[2], compact[3], compact[4]);
     return {
-      length: normalizeDimensionUnit(compact[1], compact[2]),
-      width: normalizeDimensionUnit(compact[3], compact[4]),
+      ...size,
       raw: compact[0],
+      kind: "rectangle",
+    };
+  }
+
+  const strip = line.match(/(?:^|[:=\s])(\d+(?:\.\d+)?)\s*(mm|毫米|cm|厘米)?\s*=\s*\d+\s*(?:片|块|件|个|pcs?|张)?/i);
+  if (strip) {
+    return {
+      length: DEFAULT_PARSE_OPTIONS.defaultStripLength,
+      width: normalizeDimensionUnit(strip[1], strip[2]),
+      raw: strip[0],
+      kind: "strip",
     };
   }
 
@@ -83,6 +116,9 @@ function parseSize(line) {
 }
 
 function parseMaterial(line, currentMaterial = "") {
+  const prefixedSize = line.match(/^([^:=]{2,30})\s*[:=]\s*\d/);
+  if (prefixedSize) return prefixedSize[1].trim();
+
   for (const key of MATERIAL_KEYS) {
     const match = line.match(new RegExp(`${key}\\s*[:=]?\\s*([^\\s,，;；|/]+)`, "i"));
     if (match) return match[1].replace(/[。.]$/, "");
@@ -95,16 +131,20 @@ function parseMaterial(line, currentMaterial = "") {
 }
 
 function isMaterialHeading(line) {
-  return /^(?:#\s*)?(?:颜色|色号|材质|板材|饰面|花色)\s*[:=]\s*\S+$/i.test(line);
+  return /^(?:#\s*)?(?:颜色|色号|材质|板材|饰面|花色)\s*[:=]\s*\D+$/i.test(line);
 }
 
 function parseEdges(line) {
   let edgeLong = 0;
   let edgeShort = 0;
 
-  if (/(?:四边|全封|全封边|封四边|四周封)/.test(line)) {
+  if (/(?:四边|四周|全封|全封边|封四边|四周封|门板封边|门.*四周封)/.test(line)) {
     edgeLong = 2;
     edgeShort = 2;
+  } else if (/(?:全双边|双边封|封双边|两边封)/.test(line)) {
+    edgeLong = 2;
+  } else if (/(?:全单边|单边封|封单边|封一边|一边封|余料.*单边)/.test(line)) {
+    edgeLong = 1;
   } else if (/(?:双长边|长边\s*2|长\s*2|两条长边)/.test(line)) {
     edgeLong = 2;
   } else if (/(?:单长边|长边\s*1|长\s*1|一条长边|前封|后封)/.test(line)) {
@@ -131,6 +171,10 @@ function parseEdges(line) {
   return { edgeLong, edgeShort };
 }
 
+function hasEdgeInstruction(line) {
+  return /(?:封边|封单边|单边封|全单边|四边|四周|全封|长边|短边|余料.*单边|门.*四周)/.test(line);
+}
+
 function parseGrain(line) {
   if (/(?:无纹|不锁|可旋转|自由旋转|横竖可调)/.test(line)) return false;
   return /(?:木纹|纹理|顺纹|竖纹|锁纹|方向固定|不可旋转)/.test(line);
@@ -138,6 +182,7 @@ function parseGrain(line) {
 
 function parseName(line, sizeRaw) {
   let nameSource = cleanText(line)
+    .replace(/^[^:=]{2,30}\s*[:=]\s*(?=\d)/, " ")
     .replace(sizeRaw || "", " ")
     .replace(/(?:数量|数|qty|q|共)\s*[:=]?\s*\d+\s*(?:片|块|件|个|pcs?|张)?/gi, " ")
     .replace(/(?:^|[^\d.])\d+\s*(?:片|块|件|个|pcs?|张)/gi, " ")
@@ -145,7 +190,7 @@ function parseName(line, sizeRaw) {
     .replace(/(?:颜色|色号|材质|板材|饰面|花色)\s*[:=]?\s*\S+/gi, " ")
     .replace(/(?:封边|封长边|长边封|封短边|短边封)\s*[:=]?\s*[012](?:\s*[/,， ]\s*[012])?/gi, " ")
     .replace(/(?:长边|短边)\s*[:=]?\s*[012]/gi, " ")
-    .replace(/(?:四边封|四周封|全封边|封四边|四边|全封|双长边|单长边|双短边|单短边|木纹|纹理|顺纹|竖纹|锁纹|方向固定|不可旋转|无纹|不锁|可旋转|自由旋转|横竖可调)/g, " ")
+    .replace(/(?:全单边|单边封|封单边|封一边|一边封|四边封|四周封|全封边|封四边|四边|四周|全封|双长边|单长边|双短边|单短边|木纹|纹理|顺纹|竖纹|锁纹|方向固定|不可旋转|无纹|不锁|可旋转|自由旋转|横竖可调)/g, " ")
     .replace(/[|,，;；]/g, " ");
 
   const tokens = nameSource
@@ -167,28 +212,60 @@ function splitLines(text) {
 }
 
 export function parsePartsText(text, options = {}) {
+  const parseOptions = { ...DEFAULT_PARSE_OPTIONS, ...options };
   const warnings = [];
   const parts = [];
-  let currentMaterial = options.defaultMaterial || "未分类";
+  let currentMaterial = parseOptions.defaultMaterial;
+  let currentEdges = null;
+  let segmentStart = 0;
+  const lines = splitLines(text);
 
-  splitLines(text).forEach((line, index) => {
+  lines.forEach((line, index) => {
     const nextMaterial = parseMaterial(line, currentMaterial);
     if (isMaterialHeading(line)) {
       currentMaterial = nextMaterial;
+      currentEdges = null;
+      segmentStart = parts.length;
       return;
     }
 
     const size = parseSize(line);
     if (!size) {
-      warnings.push(`第 ${index + 1} 行未识别到尺寸：${line}`);
+      if (hasEdgeInstruction(line)) {
+        currentEdges = parseEdges(line);
+        for (let partIndex = segmentStart; partIndex < parts.length; partIndex += 1) {
+          if (!parts[partIndex].edgeLong && !parts[partIndex].edgeShort) {
+            parts[partIndex].edgeLong = currentEdges.edgeLong;
+            parts[partIndex].edgeShort = currentEdges.edgeShort;
+          }
+        }
+      } else if (
+        index + 1 < lines.length &&
+        parseSize(lines[index + 1]) &&
+        /^[\u4e00-\u9fa5A-Za-z0-9·\-\s]{2,5}$/.test(line)
+      ) {
+        currentMaterial = line;
+        currentEdges = null;
+        segmentStart = parts.length;
+      } else {
+        warnings.push(`第 ${index + 1} 行未识别到尺寸：${line}`);
+      }
       return;
     }
 
     const material = nextMaterial;
     currentMaterial = material || currentMaterial;
-    const edges = parseEdges(line);
+    const parsedEdges = parseEdges(line);
+    const edges = parsedEdges.edgeLong || parsedEdges.edgeShort ? parsedEdges : currentEdges || parsedEdges;
+    const parsedName = parseName(line, size.raw);
+    const fallbackName = `板件 ${parts.length - segmentStart + 1}`;
     const part = {
-      name: parseName(line, size.raw),
+      name:
+        size.kind === "strip" && (parsedName === "未命名板件" || parsedName === material || !/[\u4e00-\u9fa5A-Za-z]/.test(parsedName))
+          ? `条子 ${size.width}`
+          : parsedName === "未命名板件"
+            ? fallbackName
+            : parsedName,
       material,
       length: size.length,
       width: size.width,
@@ -210,7 +287,7 @@ export function parsePartsText(text, options = {}) {
     parts,
     warnings,
     stats: {
-      lineCount: splitLines(text).length,
+      lineCount: lines.length,
       partTypeCount: parts.length,
       pieceCount: parts.reduce((sum, part) => sum + part.quantity, 0),
     },
@@ -229,4 +306,28 @@ export function createParserExample() {
     "背板 1180×680 数2 无纹 封边0/0",
     "门板 2100  x  395mm  2件 木纹 双长边 双短边",
   ].join("\n");
+}
+
+export function createParserExampleByType(type = "mixed") {
+  if (type === "strip") {
+    return [
+      "黑色免漆板:540=6片（封单边）",
+      "黑色免漆板:670=11片（封单边）",
+      "黑色免漆板:570=7片（封单边）",
+      "黑色免漆板:110=24片（封单边）",
+    ].join("\n");
+  }
+
+  if (type === "cabinet") {
+    return [
+      "深秋胡桃",
+      "244x55x29",
+      "244x20x9",
+      "244x11x7",
+      "244x35x3",
+      "全单边",
+    ].join("\n");
+  }
+
+  return createParserExample();
 }
