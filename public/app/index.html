@@ -9,7 +9,7 @@
     />
     <meta name="theme-color" content="#14271e" />
     <title>开料工作台｜柜体板开料计算助手</title>
-    <link rel="stylesheet" href="./app.css?v=20260722-3" />
+    <link rel="stylesheet" href="./app.css?v=20260723-1" />
   </head>
   <body>
     <header class="topbar">
@@ -54,7 +54,9 @@
             </div>
           </div>
           <div class="parser-actions">
-            <button class="text-button" id="parser-example-button" type="button">填入解析示例</button>
+            <button class="text-button parser-example" data-parser-example="mixed" type="button">常规清单</button>
+            <button class="text-button parser-example" data-parser-example="cabinet" type="button">厘米简写</button>
+            <button class="text-button parser-example" data-parser-example="strip" type="button">条子料</button>
             <button class="button subtle" id="clear-raw-button" type="button">清空</button>
           </div>
         </div>
@@ -71,10 +73,10 @@
           <div class="parser-side">
             <div class="parser-rule-list">
               <strong>可识别写法</strong>
-              <span>2440x550x2、2440 × 550 2片</span>
-              <span>长2440 宽550 数量2</span>
-              <span>颜色：卡其灰 / 材质：暖白</span>
-              <span>木纹、顺纹、可旋转、四边封、封边1/0</span>
+              <span>2440x550x2、244x55x29、长2440 宽550 数量2</span>
+              <span>黑色免漆板:540=6片、条子料默认按 2440 长</span>
+              <span>颜色：卡其灰、深秋胡桃、材质：暖白</span>
+              <span>全单边、封单边、四边封、门板四周封、封边1/0</span>
             </div>
             <label class="check-row append-row">
               <input id="append-parse" type="checkbox" />
@@ -84,7 +86,7 @@
               <span>解析到确认表</span><b>→</b>
             </button>
             <div class="parse-feedback" id="parse-feedback" aria-live="polite">
-              粘贴后点击解析，系统会先生成可编辑清单。
+              粘贴后点击解析，系统会先生成可编辑清单；无法判断的行会单独提示。
             </div>
           </div>
         </div>
@@ -209,6 +211,6 @@
     </footer>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="./app.js?v=20260722-3"></script>
+    <script type="module" src="./app.js?v=20260723-1"></script>
   </body>
 </html>
