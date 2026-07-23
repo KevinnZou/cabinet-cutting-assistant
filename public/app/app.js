@@ -5,7 +5,7 @@ import {
   normalizeSettings,
   optimizeCutting,
 } from "./optimizer.js";
-import { createParserExample, parsePartsText } from "./parser.js";
+import { createParserExampleByType, parsePartsText } from "./parser.js";
 
 const STORAGE_KEY = "cabinet-cutting-assistant:project:v1";
 const COLOR_PALETTE = ["#c5ec56", "#93c6a8", "#f0bc62", "#8fb8e8", "#d6a6e8", "#e7987f", "#aabf77"];
@@ -193,12 +193,15 @@ function resetResults() {
 
 function renderParseFeedback(result) {
   const warnings = result.warnings.slice(0, 3);
+  const coverage = result.stats.lineCount
+    ? Math.round(((result.stats.lineCount - result.warnings.length) / result.stats.lineCount) * 100)
+    : 0;
   const warningHtml = warnings.length
     ? `<ul>${warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join("")}</ul>`
     : "";
   elements.parseFeedback.innerHTML = `
     <strong>已识别 ${result.stats.partTypeCount} 种板件 / ${result.stats.pieceCount} 片</strong>
-    <span>请在下方确认尺寸、颜色、木纹和封边，再开始计算。</span>
+    <span>解析覆盖率约 ${coverage}% · 请在下方确认尺寸、颜色、木纹和封边。</span>
     ${warningHtml}
     ${result.warnings.length > warnings.length ? `<small>另有 ${result.warnings.length - warnings.length} 行未展示。</small>` : ""}
   `;
@@ -485,10 +488,12 @@ document.getElementById("sample-button").addEventListener("click", () => {
   showToast("已载入 1 张标准板的示例数据");
 });
 
-document.getElementById("parser-example-button").addEventListener("click", () => {
-  elements.rawInput.value = createParserExample();
-  elements.rawInput.focus();
-  showToast("已填入一段混合格式清单");
+document.querySelectorAll("[data-parser-example]").forEach((button) => {
+  button.addEventListener("click", () => {
+    elements.rawInput.value = createParserExampleByType(button.dataset.parserExample);
+    elements.rawInput.focus();
+    showToast(`已填入${button.textContent.trim()}示例`);
+  });
 });
 
 document.getElementById("clear-raw-button").addEventListener("click", () => {
