@@ -166,7 +166,19 @@ button { color: inherit; }
   border-bottom: 1px solid var(--line);
 }
 
-.parser-actions { display: flex; align-items: center; gap: 12px; }
+.parser-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 9px 12px; }
+
+.parser-actions .text-button {
+  padding: 7px 10px;
+  border: 1px solid #d7dfd8;
+  border-radius: 999px;
+  background: white;
+}
+
+.parser-actions .text-button:hover {
+  border-color: #aeba80;
+  background: #f8fbef;
+}
 
 .parser-grid {
   display: grid;
@@ -182,7 +194,7 @@ button { color: inherit; }
 
 .raw-input-wrap textarea {
   width: 100%;
-  min-height: 230px;
+  min-height: 260px;
   resize: vertical;
   padding: 16px;
   border: 1px solid #cfd8d1;
@@ -237,7 +249,7 @@ button { color: inherit; }
   padding: 13px;
   display: grid;
   gap: 6px;
-  border: 1px dashed #cbd5cd;
+  border: 1px solid #d7dfd8;
   border-radius: 14px;
   color: #6f7c74;
   background: rgba(255,255,255,.72);
