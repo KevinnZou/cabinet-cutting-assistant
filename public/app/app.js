@@ -8,6 +8,8 @@ import {
 import { createParserExampleByType, parsePartsText } from "./parser.js";
 
 const STORAGE_KEY = "cabinet-cutting-assistant:project:v1";
+const OCR_SPACE_ENDPOINT = "https://api.ocr.space/parse/image";
+const OCR_SPACE_DEMO_KEY = "helloworld";
 const COLOR_PALETTE = ["#c5ec56", "#93c6a8", "#f0bc62", "#8fb8e8", "#d6a6e8", "#e7987f", "#aabf77"];
 
 const elements = {
@@ -31,6 +33,9 @@ const elements = {
   parseButton: document.getElementById("parse-button"),
   appendParse: document.getElementById("append-parse"),
   parseFeedback: document.getElementById("parse-feedback"),
+  ocrButton: document.getElementById("ocr-button"),
+  ocrFile: document.getElementById("ocr-file"),
+  ocrStatus: document.getElementById("ocr-status"),
   toast: document.getElementById("toast"),
 };
 
@@ -105,6 +110,18 @@ function showToast(message) {
   elements.toast.textContent = message;
   elements.toast.classList.add("show");
   toastTimer = setTimeout(() => elements.toast.classList.remove("show"), 2400);
+}
+
+function setOcrStatus(message) {
+  if (elements.ocrStatus) elements.ocrStatus.textContent = message;
+}
+
+function appendRawInput(text) {
+  const cleanText = text.trim();
+  if (!cleanText) return;
+  const current = elements.rawInput.value.trim();
+  elements.rawInput.value = current ? `${current}\n\n${cleanText}` : cleanText;
+  elements.rawInput.focus();
 }
 
 function saveState({ immediate = false } = {}) {
@@ -243,6 +260,62 @@ function parseRawInput() {
   saveState();
   document.getElementById("parts-title").scrollIntoView({ behavior: "smooth", block: "start" });
   showToast(`已生成 ${result.stats.partTypeCount} 种板件，请二次确认`);
+}
+
+async function recognizeImage(file) {
+  if (!file) return;
+  if (!file.type.startsWith("image/")) {
+    showToast("请上传图片文件");
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("apikey", OCR_SPACE_DEMO_KEY);
+  formData.append("language", "chs");
+  formData.append("OCREngine", "2");
+  formData.append("scale", "true");
+  formData.append("detectOrientation", "true");
+  formData.append("isOverlayRequired", "false");
+
+  elements.ocrButton.disabled = true;
+  elements.ocrButton.textContent = "正在识别…";
+  setOcrStatus("正在上传图片到 OCR.Space 免费接口识别，请稍等。");
+
+  try {
+    const response = await fetch(OCR_SPACE_ENDPOINT, {
+      method: "POST",
+      body: formData,
+    });
+    if (!response.ok) throw new Error(`OCR request failed: ${response.status}`);
+    const payload = await response.json();
+    const errors = [
+      ...(Array.isArray(payload.ErrorMessage) ? payload.ErrorMessage : payload.ErrorMessage ? [payload.ErrorMessage] : []),
+      ...(Array.isArray(payload.ErrorDetails) ? payload.ErrorDetails : payload.ErrorDetails ? [payload.ErrorDetails] : []),
+    ].filter(Boolean);
+    if (payload.IsErroredOnProcessing || errors.length) throw new Error(errors.join("；") || "OCR processing failed");
+
+    const text = (payload.ParsedResults || [])
+      .map((result) => result.ParsedText || "")
+      .join("\n")
+      .trim();
+    if (!text) {
+      setOcrStatus("没有识别到文字，可以换一张更清晰、正向的图片再试。");
+      showToast("OCR 未识别到文字");
+      return;
+    }
+
+    appendRawInput(text);
+    setOcrStatus(`已识别 ${text.length} 个字符，可继续点击“解析到确认表”。`);
+    showToast("OCR 识别完成，文字已放入输入框");
+  } catch (error) {
+    setOcrStatus(`识别失败：${error.message || "免费接口暂时不可用，请稍后重试。"}`);
+    showToast("OCR 识别失败，请稍后再试");
+  } finally {
+    elements.ocrButton.disabled = false;
+    elements.ocrButton.textContent = "上传图片识别";
+    elements.ocrFile.value = "";
+  }
 }
 
 function updateStateFromPartInput(target) {
@@ -500,10 +573,15 @@ document.getElementById("clear-raw-button").addEventListener("click", () => {
   elements.rawInput.value = "";
   elements.parseFeedback.textContent = "粘贴后点击解析，系统会先生成可编辑清单。";
   elements.parseFeedback.classList.remove("has-warning");
+  setOcrStatus("使用 OCR.Space 免费接口，图片会发送到第三方服务。");
   elements.rawInput.focus();
 });
 
 elements.parseButton.addEventListener("click", parseRawInput);
+elements.ocrButton.addEventListener("click", () => elements.ocrFile.click());
+elements.ocrFile.addEventListener("change", () => {
+  if (elements.ocrFile.files?.[0]) recognizeImage(elements.ocrFile.files[0]);
+});
 
 elements.partsBody.addEventListener("input", (event) => updateStateFromPartInput(event.target));
 elements.partsBody.addEventListener("change", (event) => updateStateFromPartInput(event.target));
