@@ -9,7 +9,7 @@
     />
     <meta name="theme-color" content="#14271e" />
     <title>开料工作台｜柜体板开料计算助手</title>
-    <link rel="stylesheet" href="./app.css?v=20260725-1" />
+    <link rel="stylesheet" href="./app.css?v=20260725-2" />
   </head>
   <body>
     <header class="topbar">
@@ -61,31 +61,41 @@
           </div>
         </div>
         <div class="parser-grid">
-          <label class="raw-input-wrap">
-            <span>文字清单 / OCR 结果</span>
+          <div class="input-panel">
+            <div class="input-panel-head">
+              <label class="raw-input-title" for="raw-input">
+                <span>文字清单 / OCR 结果</span>
+                <small>复制客户清单，或先上传图片识别文字</small>
+              </label>
+              <div class="ocr-strip">
+                <button class="button subtle ocr-button" id="ocr-button" type="button">
+                  <span>上传图片 OCR</span>
+                </button>
+                <input id="ocr-file" type="file" accept="image/*" hidden />
+                <small id="ocr-status">免费 OCR 接口识别，图片会发送到第三方服务。</small>
+              </div>
+            </div>
             <textarea
               id="raw-input"
               rows="10"
               spellcheck="false"
               placeholder="例如：&#10;颜色：卡其灰&#10;侧板 2440x550 2片 木纹 单长边&#10;层板 长760 宽520 数量4 四边封"
             ></textarea>
-          </label>
-          <div class="parser-side">
-            <div class="ocr-box">
-              <div>
-                <strong>图片 OCR 识别</strong>
-                <span>上传拍照清单，识别文字后可继续自动解析。</span>
-              </div>
-              <button class="button subtle" id="ocr-button" type="button">上传图片识别</button>
-              <input id="ocr-file" type="file" accept="image/*" hidden />
-              <small id="ocr-status">使用 OCR.Space 免费接口，图片会发送到第三方服务。</small>
-            </div>
-            <div class="parser-rule-list">
+            <div class="parser-rule-list" aria-label="可识别写法">
               <strong>可识别写法</strong>
-              <span>2440x550x2、244x55x29、长2440 宽550 数量2</span>
-              <span>黑色免漆板:540=6片、条子料默认按 2440 长</span>
-              <span>颜色：卡其灰、深秋胡桃、材质：暖白</span>
-              <span>全单边、封单边、四边封、门板四周封、封边1/0</span>
+              <span>2440×550×2</span>
+              <span>244×55×29</span>
+              <span>长2440 宽550 数量2</span>
+              <span>黑色免漆板:540=6片</span>
+              <span>颜色/材质混写</span>
+              <span>全单边 / 四边封 / 封边1/0</span>
+            </div>
+          </div>
+          <div class="parser-side">
+            <div class="parse-panel">
+              <span class="panel-kicker">下一步</span>
+              <h3>生成可编辑板件清单</h3>
+              <p>解析后先进入下方表格，你可以继续改尺寸、数量、颜色、木纹和封边。</p>
             </div>
             <label class="check-row append-row">
               <input id="append-parse" type="checkbox" />
@@ -220,6 +230,6 @@
     </footer>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="./app.js?v=20260725-1"></script>
+    <script type="module" src="./app.js?v=20260725-2"></script>
   </body>
 </html>
