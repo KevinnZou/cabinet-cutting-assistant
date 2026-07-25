@@ -8,7 +8,7 @@ test("工作台提供图片 OCR 上传入口", async () => {
   assert.match(html, /id="ocr-button"/);
   assert.match(html, /id="ocr-file"/);
   assert.match(html, /accept="image\/\*"/);
-  assert.match(html, /OCR\.Space 免费接口/);
+  assert.match(html, /免费 OCR 接口/);
 });
 
 test("OCR 前端流程使用开放免费接口", async () => {
