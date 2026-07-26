@@ -101,3 +101,41 @@ test("前置全局封边规则会套用到后续板件", () => {
   assert.equal(result.parts[1].edgeLong, 2);
   assert.equal(result.parts[1].edgeShort, 2);
 });
+
+test("支持尺寸等号数量写法和行内封边词", () => {
+  const result = parsePartsText(`
+柜门纯色
+门板 398x690=16 单边
+侧封板 398x110=2 一长一短
+`);
+
+  assert.equal(result.parts.length, 2);
+  assert.equal(result.parts[0].name, "门板");
+  assert.equal(result.parts[0].length, 398);
+  assert.equal(result.parts[0].width, 690);
+  assert.equal(result.parts[0].quantity, 16);
+  assert.equal(result.parts[0].edgeLong, 1);
+  assert.equal(result.parts[0].edgeShort, 0);
+  assert.equal(result.parts[1].quantity, 2);
+  assert.equal(result.parts[1].name, "侧封板");
+  assert.equal(result.parts[1].edgeLong, 1);
+  assert.equal(result.parts[1].edgeShort, 1);
+});
+
+test("支持以下都封边和显式不封边", () => {
+  const result = parsePartsText(`
+颜色:暖白
+以下都封4边
+门板 700x400=2
+抽面 690x180=3
+背板 1180x680=1 封边0/0
+`);
+
+  assert.equal(result.parts.length, 3);
+  assert.equal(result.parts[0].edgeLong, 2);
+  assert.equal(result.parts[0].edgeShort, 2);
+  assert.equal(result.parts[1].edgeLong, 2);
+  assert.equal(result.parts[1].edgeShort, 2);
+  assert.equal(result.parts[2].edgeLong, 0);
+  assert.equal(result.parts[2].edgeShort, 0);
+});
