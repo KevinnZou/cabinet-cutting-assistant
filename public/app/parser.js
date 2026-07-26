@@ -2,6 +2,7 @@ const MATERIAL_KEYS = ["颜色", "色号", "材质", "板材", "饰面", "花色
 const DEFAULT_PARSE_OPTIONS = Object.freeze({
   defaultMaterial: "未分类",
   defaultStripLength: 2440,
+  defaultEdges: { edgeLong: 1, edgeShort: 0 },
 });
 const NAME_STOP_WORDS = new Set([
   "长",
@@ -62,6 +63,9 @@ function normalizeCompactDimensions(lengthValue, lengthUnit, widthValue, widthUn
 }
 
 function parseCount(line) {
+  const sizeEqualsCount = line.match(/\b\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|m|米)?\s*x\s*\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|m|米)?\s*=\s*(\d+)\s*(?:片|块|件|个|pcs?|张)?/i);
+  if (sizeEqualsCount) return Math.max(1, Math.floor(toNumber(sizeEqualsCount[1], 1)));
+
   const equalCount = line.match(/(?:^|[:=\s])\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米)?\s*=\s*(\d+)\s*(?:片|块|件|个|pcs?|张)?/i);
   if (equalCount) return Math.max(1, Math.floor(toNumber(equalCount[1], 1)));
 
@@ -116,7 +120,7 @@ function parseSize(line) {
 }
 
 function parseMaterial(line, currentMaterial = "") {
-  const prefixedSize = line.match(/^([^:=]{2,30})\s*[:=]\s*\d/);
+  const prefixedSize = line.match(/^([^:=]{2,30})\s*:\s*\d/);
   if (prefixedSize) return prefixedSize[1].trim();
 
   for (const key of MATERIAL_KEYS) {
@@ -135,16 +139,20 @@ function isMaterialHeading(line) {
 }
 
 function parseEdges(line) {
+  const explicit = hasEdgeInstruction(line);
   let edgeLong = 0;
   let edgeShort = 0;
 
-  if (/(?:四边|四周|全封|全封边|封四边|四周封|门板封边|门.*四周封)/.test(line)) {
+  if (/(?:4边|四边|四周|全封|全封边|封4边|封四边|四周封|门板封边|门.*四周封|都封4边|都封四边)/.test(line)) {
     edgeLong = 2;
     edgeShort = 2;
   } else if (/(?:全双边|双边封|封双边|两边封)/.test(line)) {
     edgeLong = 2;
-  } else if (/(?:全单边|单边封|封单边|封一边|一边封|余料.*单边)/.test(line)) {
+  } else if (/(?:全单边|单边封|封单边|封一边|一边封|余料.*单边|(?:^|\s|\(|（)单边(?:$|\s|\)|）)|都单边)/.test(line)) {
     edgeLong = 1;
+  } else if (/(?:不封边|不用封边|免封边|封边\s*[:=]?\s*0\s*[/,， ]\s*0)/.test(line)) {
+    edgeLong = 0;
+    edgeShort = 0;
   } else if (/(?:双长边|长边\s*2|长\s*2|两条长边)/.test(line)) {
     edgeLong = 2;
   } else if (/(?:单长边|长边\s*1|长\s*1|一条长边|前封|后封)/.test(line)) {
@@ -155,6 +163,17 @@ function parseEdges(line) {
     edgeShort = 2;
   } else if (/(?:单短边|短边\s*1|短\s*1|一条短边|左封|右封)/.test(line)) {
     edgeShort = 1;
+  }
+
+  if (/(?:一长一短|一短一长|单长单短)/.test(line)) {
+    edgeLong = 1;
+    edgeShort = 1;
+  } else if (/(?:两长一短|双长一短)/.test(line)) {
+    edgeLong = 2;
+    edgeShort = 1;
+  } else if (/(?:两短一长|双短一长)/.test(line)) {
+    edgeLong = 1;
+    edgeShort = 2;
   }
 
   const longMatch = line.match(/(?:封长边|长边封|edgeLong|长边)\s*[:=]?\s*([012])/i);
@@ -168,11 +187,11 @@ function parseEdges(line) {
     edgeShort = Number(shorthand[2]);
   }
 
-  return { edgeLong, edgeShort };
+  return { edgeLong, edgeShort, explicit };
 }
 
 function hasEdgeInstruction(line) {
-  return /(?:封边|封单边|单边封|全单边|四边|四周|全封|长边|短边|余料.*单边|门.*四周)/.test(line);
+  return /(?:封边|封单边|单边封|全单边|单边|4边|四边|四周|全封|长边|短边|一长一短|两长一短|两短一长|余料.*单边|门.*四周|不封边|免封边)/.test(line);
 }
 
 function parseGrain(line) {
@@ -182,15 +201,16 @@ function parseGrain(line) {
 
 function parseName(line, sizeRaw) {
   let nameSource = cleanText(line)
-    .replace(/^[^:=]{2,30}\s*[:=]\s*(?=\d)/, " ")
+    .replace(/^[^:=]{2,30}\s*:\s*(?=\d)/, " ")
     .replace(sizeRaw || "", " ")
     .replace(/(?:数量|数|qty|q|共)\s*[:=]?\s*\d+\s*(?:片|块|件|个|pcs?|张)?/gi, " ")
     .replace(/(?:^|[^\d.])\d+\s*(?:片|块|件|个|pcs?|张)/gi, " ")
     .replace(/(?:x|\*)\s*\d+\s*(?:片|块|件|个|pcs?|张)?/gi, " ")
     .replace(/(?:颜色|色号|材质|板材|饰面|花色)\s*[:=]?\s*\S+/gi, " ")
     .replace(/(?:封边|封长边|长边封|封短边|短边封)\s*[:=]?\s*[012](?:\s*[/,， ]\s*[012])?/gi, " ")
+    .replace(/=\s*\d+\s*(?:片|块|件|个|pcs?|张)?/gi, " ")
     .replace(/(?:长边|短边)\s*[:=]?\s*[012]/gi, " ")
-    .replace(/(?:全单边|单边封|封单边|封一边|一边封|四边封|四周封|全封边|封四边|四边|四周|全封|双长边|单长边|双短边|单短边|木纹|纹理|顺纹|竖纹|锁纹|方向固定|不可旋转|无纹|不锁|可旋转|自由旋转|横竖可调)/g, " ")
+    .replace(/(?:全单边|单边封|封单边|封一边|一边封|单边|四边封|四周封|全封边|封4边|封四边|4边|四边|四周|全封|双长边|单长边|双短边|单短边|一长一短|两长一短|两短一长|不封边|免封边|木纹|纹理|顺纹|竖纹|锁纹|方向固定|不可旋转|无纹|不锁|可旋转|自由旋转|横竖可调)/g, " ")
     .replace(/[|,，;；]/g, " ");
 
   const tokens = nameSource
@@ -216,7 +236,7 @@ export function parsePartsText(text, options = {}) {
   const warnings = [];
   const parts = [];
   let currentMaterial = parseOptions.defaultMaterial;
-  let currentEdges = null;
+  let currentEdges = parseOptions.defaultEdges;
   let segmentStart = 0;
   const lines = splitLines(text);
 
@@ -224,7 +244,7 @@ export function parsePartsText(text, options = {}) {
     const nextMaterial = parseMaterial(line, currentMaterial);
     if (isMaterialHeading(line)) {
       currentMaterial = nextMaterial;
-      currentEdges = null;
+      currentEdges = parseOptions.defaultEdges;
       segmentStart = parts.length;
       return;
     }
@@ -234,7 +254,7 @@ export function parsePartsText(text, options = {}) {
       if (hasEdgeInstruction(line)) {
         currentEdges = parseEdges(line);
         for (let partIndex = segmentStart; partIndex < parts.length; partIndex += 1) {
-          if (!parts[partIndex].edgeLong && !parts[partIndex].edgeShort) {
+          if (!parts[partIndex].edgeExplicit) {
             parts[partIndex].edgeLong = currentEdges.edgeLong;
             parts[partIndex].edgeShort = currentEdges.edgeShort;
           }
@@ -245,7 +265,7 @@ export function parsePartsText(text, options = {}) {
         /^[\u4e00-\u9fa5A-Za-z0-9·\-\s]{2,5}$/.test(line)
       ) {
         currentMaterial = line;
-        currentEdges = null;
+        currentEdges = parseOptions.defaultEdges;
         segmentStart = parts.length;
       } else {
         warnings.push(`第 ${index + 1} 行未识别到尺寸：${line}`);
@@ -256,7 +276,7 @@ export function parsePartsText(text, options = {}) {
     const material = nextMaterial;
     currentMaterial = material || currentMaterial;
     const parsedEdges = parseEdges(line);
-    const edges = parsedEdges.edgeLong || parsedEdges.edgeShort ? parsedEdges : currentEdges || parsedEdges;
+    const edges = parsedEdges.explicit ? parsedEdges : currentEdges || parsedEdges;
     const parsedName = parseName(line, size.raw);
     const fallbackName = `板件 ${parts.length - segmentStart + 1}`;
     const part = {
@@ -273,6 +293,7 @@ export function parsePartsText(text, options = {}) {
       grainLocked: parseGrain(line),
       edgeLong: edges.edgeLong,
       edgeShort: edges.edgeShort,
+      edgeExplicit: parsedEdges.explicit,
       sourceText: line,
     };
 
