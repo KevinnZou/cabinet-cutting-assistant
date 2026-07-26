@@ -9,7 +9,7 @@
     />
     <meta name="theme-color" content="#14271e" />
     <title>开料工作台｜柜体板开料计算助手</title>
-    <link rel="stylesheet" href="./app.css?v=20260725-2" />
+    <link rel="stylesheet" href="./app.css?v=20260726-1" />
   </head>
   <body>
     <header class="topbar">
@@ -84,11 +84,12 @@
             <div class="parser-rule-list" aria-label="可识别写法">
               <strong>可识别写法</strong>
               <span>2440×550×2</span>
+              <span>398×690=16</span>
               <span>244×55×29</span>
               <span>长2440 宽550 数量2</span>
               <span>黑色免漆板:540=6片</span>
-              <span>颜色/材质混写</span>
-              <span>全单边 / 四边封 / 封边1/0</span>
+              <span>以下都四边 / 以下都单边</span>
+              <span>单边 / 四边 / 两长一短</span>
             </div>
           </div>
           <div class="parser-side">
@@ -157,6 +158,20 @@
               <div><h2 id="parts-title">板件确认表</h2><p id="parts-summary">0 种板件 · 0 片</p></div>
             </div>
             <div class="table-actions">
+              <div class="batch-edge-actions" aria-label="批量修改封边方式">
+                <select id="batch-edge-select" aria-label="批量封边方式">
+                  <option value="1/0">单边</option>
+                  <option value="2/2">四边</option>
+                  <option value="2/0">双长边</option>
+                  <option value="0/2">双短边</option>
+                  <option value="1/1">一长一短</option>
+                  <option value="2/1">两长一短</option>
+                  <option value="1/2">两短一长</option>
+                  <option value="0/1">单短边</option>
+                  <option value="0/0">不封边</option>
+                </select>
+                <button class="button subtle compact-button" id="apply-edge-button" type="button">批量封边</button>
+              </div>
               <button class="text-button" id="sample-button" type="button">载入示例</button>
               <button class="button dark" id="add-part-button" type="button"><span>＋</span> 添加板件</button>
             </div>
@@ -164,7 +179,7 @@
 
           <div class="table-help">
             <span>解析结果会进入这里复核；尺寸按“长 × 宽”录入，木纹锁定后长边沿标准板长度方向。</span>
-            <span>封边可分别设置长边、短边的边数。</span>
+            <span>封边可单行选择，也可用右上方批量修改全部板件。</span>
           </div>
 
           <div class="parts-table-wrap">
@@ -175,8 +190,7 @@
                   <th>长 × 宽（mm）</th>
                   <th>数量</th>
                   <th>木纹</th>
-                  <th>封长边</th>
-                  <th>封短边</th>
+                  <th>封边方式</th>
                   <th><span class="sr-only">删除</span></th>
                 </tr>
               </thead>
@@ -230,6 +244,6 @@
     </footer>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="./app.js?v=20260725-2"></script>
+    <script type="module" src="./app.js?v=20260726-1"></script>
   </body>
 </html>
