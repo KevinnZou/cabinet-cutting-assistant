@@ -11,6 +11,17 @@ const STORAGE_KEY = "cabinet-cutting-assistant:project:v1";
 const OCR_SPACE_ENDPOINT = "https://api.ocr.space/parse/image";
 const OCR_SPACE_DEMO_KEY = "helloworld";
 const COLOR_PALETTE = ["#c5ec56", "#93c6a8", "#f0bc62", "#8fb8e8", "#d6a6e8", "#e7987f", "#aabf77"];
+const EDGE_PRESETS = [
+  { value: "1/0", label: "单边", edgeLong: 1, edgeShort: 0 },
+  { value: "2/2", label: "四边", edgeLong: 2, edgeShort: 2 },
+  { value: "2/0", label: "双长边", edgeLong: 2, edgeShort: 0 },
+  { value: "0/2", label: "双短边", edgeLong: 0, edgeShort: 2 },
+  { value: "1/1", label: "一长一短", edgeLong: 1, edgeShort: 1 },
+  { value: "2/1", label: "两长一短", edgeLong: 2, edgeShort: 1 },
+  { value: "1/2", label: "两短一长", edgeLong: 1, edgeShort: 2 },
+  { value: "0/1", label: "单短边", edgeLong: 0, edgeShort: 1 },
+  { value: "0/0", label: "不封边", edgeLong: 0, edgeShort: 0 },
+];
 
 const elements = {
   projectName: document.getElementById("project-name"),
@@ -29,6 +40,8 @@ const elements = {
   resultActions: document.getElementById("result-actions"),
   resultCaption: document.getElementById("result-caption"),
   importFile: document.getElementById("import-file"),
+  batchEdgeSelect: document.getElementById("batch-edge-select"),
+  applyEdgeButton: document.getElementById("apply-edge-button"),
   rawInput: document.getElementById("raw-input"),
   parseButton: document.getElementById("parse-button"),
   appendParse: document.getElementById("append-parse"),
@@ -52,7 +65,7 @@ function newPart(overrides = {}) {
     width: 400,
     quantity: 1,
     grainLocked: false,
-    edgeLong: 0,
+    edgeLong: 1,
     edgeShort: 0,
     ...overrides,
   };
@@ -142,15 +155,23 @@ function saveState({ immediate = false } = {}) {
   else saveTimer = setTimeout(persist, 320);
 }
 
-function edgeOptions(selected) {
-  return [0, 1, 2]
-    .map((value) => `<option value="${value}" ${Number(selected) === value ? "selected" : ""}>${value} 边</option>`)
+function edgePresetFromValue(value) {
+  return EDGE_PRESETS.find((preset) => preset.value === value) || EDGE_PRESETS[0];
+}
+
+function edgeValueFromPart(part) {
+  return `${Math.max(0, Math.min(2, Number(part.edgeLong) || 0))}/${Math.max(0, Math.min(2, Number(part.edgeShort) || 0))}`;
+}
+
+function edgePresetOptions(selectedValue = "1/0") {
+  return EDGE_PRESETS
+    .map((preset) => `<option value="${preset.value}" ${selectedValue === preset.value ? "selected" : ""}>${preset.label}</option>`)
     .join("");
 }
 
 function renderParts() {
   if (!state.parts.length) {
-    elements.partsBody.innerHTML = '<tr class="empty-row"><td colspan="7">暂无板件，点击“添加板件”开始录入。</td></tr>';
+    elements.partsBody.innerHTML = '<tr class="empty-row"><td colspan="6">暂无板件，点击“添加板件”开始录入。</td></tr>';
   } else {
     elements.partsBody.innerHTML = state.parts
       .map(
@@ -171,8 +192,7 @@ function renderParts() {
             </td>
             <td><input class="quantity-input" aria-label="数量" data-field="quantity" type="number" min="1" max="999" step="1" value="${part.quantity}" /></td>
             <td><input class="grain-check" aria-label="锁定木纹方向" data-field="grainLocked" type="checkbox" ${part.grainLocked ? "checked" : ""} /></td>
-            <td><select class="edge-select" aria-label="封长边数量" data-field="edgeLong">${edgeOptions(part.edgeLong)}</select></td>
-            <td><select class="edge-select" aria-label="封短边数量" data-field="edgeShort">${edgeOptions(part.edgeShort)}</select></td>
+            <td><select class="edge-select" aria-label="封边方式" data-field="edgePreset">${edgePresetOptions(edgeValueFromPart(part))}</select></td>
             <td><button class="delete-button" type="button" data-action="delete" aria-label="删除 ${escapeHtml(part.name)}">×</button></td>
           </tr>
         `,
@@ -326,7 +346,11 @@ function updateStateFromPartInput(target) {
   const field = target.dataset.field;
   if (!field) return;
 
-  if (target.type === "checkbox") part[field] = target.checked;
+  if (field === "edgePreset") {
+    const preset = edgePresetFromValue(target.value);
+    part.edgeLong = preset.edgeLong;
+    part.edgeShort = preset.edgeShort;
+  } else if (target.type === "checkbox") part[field] = target.checked;
   else if (target.type === "number" || target.tagName === "SELECT") part[field] = parseNumericValue(target.value);
   else part[field] = target.value;
 
@@ -335,6 +359,23 @@ function updateStateFromPartInput(target) {
   elements.calculationReady.textContent = count ? `共 ${count} 片，等待排版` : "请先添加板件";
   resetResults();
   saveState();
+}
+
+function applyBatchEdgePreset() {
+  if (!state.parts.length) {
+    showToast("请先添加或解析板件");
+    return;
+  }
+  const preset = edgePresetFromValue(elements.batchEdgeSelect.value);
+  state.parts = state.parts.map((part) => ({
+    ...part,
+    edgeLong: preset.edgeLong,
+    edgeShort: preset.edgeShort,
+  }));
+  renderParts();
+  resetResults();
+  saveState();
+  showToast(`已将全部板件改为${preset.label}`);
 }
 
 function formatPercent(value) {
@@ -613,6 +654,7 @@ elements.projectName.addEventListener("input", () => {
 });
 
 elements.calculateButton.addEventListener("click", calculate);
+elements.applyEdgeButton.addEventListener("click", applyBatchEdgePreset);
 document.getElementById("export-button").addEventListener("click", exportProject);
 document.getElementById("import-button").addEventListener("click", () => elements.importFile.click());
 elements.importFile.addEventListener("change", () => {
