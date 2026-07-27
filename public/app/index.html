@@ -10,6 +10,45 @@
     <meta name="theme-color" content="#14271e" />
     <title>开料工作台｜柜体板开料计算助手</title>
     <link rel="stylesheet" href="./app.css?v=20260727-1" />
+    <style>
+      .print-summary { display: none; }
+      .sheet-count-badge { margin-left: auto; padding: 7px 10px; border-radius: 999px; color: white; background: #14271e; font-size: 10px; white-space: nowrap; }
+      @media print {
+        @page { margin: 12mm; }
+        body { background: white; }
+        .topbar, .workspace-head, .workspace-grid, .result-actions, .footer, .toast, .calculation-notes { display: none !important; }
+        .page-shell { max-width: none; padding: 0; }
+        .results-section { margin: 0; border: 0; box-shadow: none; }
+        .results-head { padding: 0 0 10px; border-bottom: 1px solid #d7ddd7; }
+        .results-head .card-heading { padding: 0; }
+        .results-head .step-number, .result-caption { display: none !important; }
+        .results-head h2 { font-size: 18px; }
+        .result-content { padding: 12px 0 0; background: white; }
+        .print-summary { margin-bottom: 12px; padding: 0 0 10px; display: grid; gap: 8px; border-bottom: 1px solid #e3e7e3; }
+        .print-summary > div { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
+        .print-summary strong { font-size: 17px; }
+        .print-summary span { color: #66736b; font-size: 10px; }
+        .print-summary dl { margin: 0; display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+        .print-summary dl div { padding: 8px 10px; border: 1px solid #dfe5df; border-radius: 8px; }
+        .print-summary dt { color: #66736b; font-size: 9px; }
+        .print-summary dd { margin: 4px 0 0; color: #14271e; font-size: 12px; font-weight: 800; }
+        .result-stats { display: none; }
+        .result-alerts { margin-top: 8px; }
+        .sheet-list { margin-top: 10px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+        .sheet-card { padding: 10px; break-inside: avoid; border-color: #d4dcd5; border-radius: 10px; }
+        .sheet-card-head { margin-bottom: 8px; gap: 6px; }
+        .sheet-card-head strong { font-size: 11px; }
+        .sheet-card-head span { font-size: 8px; }
+        .usage-pill, .sheet-count-badge { padding: 4px 6px; font-size: 8px; }
+        .sheet-visual-wrap { grid-template-columns: 1fr; gap: 8px; }
+        .sheet-svg { max-height: 310px; box-shadow: inset 0 0 0 1px #aeb9b1; }
+        .placement-list { grid-template-columns: repeat(2, minmax(0, 1fr)); max-height: none; gap: 4px; }
+        .placement-row { padding: 5px 6px; grid-template-columns: 18px minmax(0, 1fr); gap: 5px; }
+        .placement-row i { width: 18px; height: 18px; font-size: 7px; }
+        .placement-row strong { font-size: 8px; }
+        .placement-row span { font-size: 7px; }
+      }
+    </style>
   </head>
   <body>
     <header class="topbar">
@@ -246,5 +285,91 @@
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
     <script type="module" src="./app.js?v=20260727-1"></script>
+    <script type="module">
+      const formatRanges = (numbers) => {
+        const sorted = [...numbers].sort((a, b) => a - b);
+        const ranges = [];
+        let start = sorted[0];
+        let previous = sorted[0];
+        for (let index = 1; index <= sorted.length; index += 1) {
+          const current = sorted[index];
+          if (current === previous + 1) {
+            previous = current;
+            continue;
+          }
+          ranges.push(start === previous ? `${start}` : `${start}-${previous}`);
+          start = current;
+          previous = current;
+        }
+        return ranges.join("、");
+      };
+
+      const normalizeSheetTitle = (title) => title.replace(/ · 第 \d+ 张$/, "");
+      const readSheetNumber = (title) => Number(title.match(/第 (\d+) 张/)?.[1] || 0);
+
+      function syncPrintSummary() {
+        const summary = document.getElementById("print-summary");
+        const stats = [...document.querySelectorAll(".stat-card")].map((card) => ({
+          label: card.querySelector("span")?.textContent.trim() || "",
+          value: card.querySelector("strong")?.textContent.trim() || "",
+        }));
+        if (!summary || stats.length < 4) return;
+        summary.innerHTML = `
+          <div>
+            <strong>${document.getElementById("project-name")?.value || "开料项目"}</strong>
+            <span>${new Date().toLocaleString("zh-CN", { hour12: false })}</span>
+          </div>
+          <dl>
+            <div><dt>标准板</dt><dd>${document.getElementById("rule-summary")?.textContent.match(/标准板 ([^·]+)/)?.[1]?.trim() || "1220 × 2440 mm"}</dd></div>
+            <div><dt>${stats[0].label}</dt><dd>${stats[0].value}</dd></div>
+            <div><dt>${stats[1].label}</dt><dd>${stats[1].value}</dd></div>
+            <div><dt>${stats[2].label}</dt><dd>${stats[2].value}</dd></div>
+          </dl>
+        `;
+      }
+
+      function groupRepeatedSheets() {
+        const list = document.getElementById("sheet-list");
+        if (!list || !list.children.length) return;
+        const cards = [...list.querySelectorAll(".sheet-card")];
+        if (!cards.length || cards.some((card) => card.dataset.grouped === "1")) return;
+
+        const groups = new Map();
+        cards.forEach((card) => {
+          const title = card.querySelector(".sheet-card-head strong")?.textContent.trim() || "";
+          const subtitle = card.querySelector(".sheet-card-head span")?.textContent.trim() || "";
+          const usage = card.querySelector(".usage-pill")?.textContent.trim() || "";
+          const placementText = card.querySelector(".placement-list")?.textContent.replace(/\s+/g, " ").trim() || "";
+          const key = [normalizeSheetTitle(title), subtitle.replace(/ · \d+ 片$/, ""), usage, placementText].join("|");
+          const group = groups.get(key) || { cards: [], numbers: [], title, subtitle };
+          group.cards.push(card);
+          group.numbers.push(readSheetNumber(title));
+          groups.set(key, group);
+        });
+
+        groups.forEach((group) => {
+          const first = group.cards[0];
+          first.dataset.grouped = "1";
+          if (group.cards.length <= 1) return;
+          const heading = first.querySelector(".sheet-card-head");
+          const title = heading?.querySelector("strong");
+          const subtitle = heading?.querySelector("span");
+          if (title) title.textContent = `${normalizeSheetTitle(group.title)} · 第 ${formatRanges(group.numbers)} 张`;
+          if (subtitle) subtitle.textContent = subtitle.textContent.replace(/(\d+ 片)$/, "单张 $1") + ` · 共 ${group.cards.length} 张同版`;
+          if (heading && !heading.querySelector(".sheet-count-badge")) {
+            heading.insertAdjacentHTML("beforeend", `<b class="sheet-count-badge">同版 × ${group.cards.length} 张</b>`);
+          }
+          group.cards.slice(1).forEach((card) => card.remove());
+        });
+      }
+
+      const observer = new MutationObserver(() => {
+        queueMicrotask(() => {
+          syncPrintSummary();
+          groupRepeatedSheets();
+        });
+      });
+      observer.observe(document.getElementById("result-content"), { childList: true, subtree: true });
+    </script>
   </body>
 </html>
