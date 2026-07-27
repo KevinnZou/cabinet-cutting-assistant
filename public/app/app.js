@@ -34,6 +34,7 @@ const elements = {
   resultPlaceholder: document.getElementById("result-placeholder"),
   resultContent: document.getElementById("result-content"),
   resultStats: document.getElementById("result-stats"),
+  printSummary: document.getElementById("print-summary"),
   resultAlerts: document.getElementById("result-alerts"),
   sheetList: document.getElementById("sheet-list"),
   calculationNotes: document.getElementById("calculation-notes"),
@@ -382,6 +383,69 @@ function formatPercent(value) {
   return `${value.toFixed(1)}%`;
 }
 
+function createSheetSignature(sheet) {
+  return JSON.stringify({
+    material: sheet.material,
+    utilization: Number(sheet.utilization).toFixed(4),
+    placements: sheet.placements.map((placement) => ({
+      name: placement.name,
+      length: placement.length,
+      width: placement.width,
+      x: placement.x,
+      y: placement.y,
+      placedWidth: placement.placedWidth,
+      placedHeight: placement.placedHeight,
+      rotated: Boolean(placement.rotated),
+      grainLocked: Boolean(placement.grainLocked),
+    })),
+  });
+}
+
+function groupSheetsByLayout(sheets) {
+  const groups = [];
+  const groupIndexBySignature = new Map();
+
+  sheets.forEach((sheet) => {
+    const signature = createSheetSignature(sheet);
+    const existingIndex = groupIndexBySignature.get(signature);
+    if (existingIndex === undefined) {
+      groupIndexBySignature.set(signature, groups.length);
+      groups.push({
+        signature,
+        representative: sheet,
+        sheetNumbers: [sheet.number],
+      });
+      return;
+    }
+    groups[existingIndex].sheetNumbers.push(sheet.number);
+  });
+
+  return groups.map((group) => ({
+    ...group,
+    count: group.sheetNumbers.length,
+  }));
+}
+
+function formatSheetNumbers(numbers) {
+  const sorted = [...numbers].sort((first, second) => first - second);
+  const ranges = [];
+  let start = sorted[0];
+  let previous = sorted[0];
+
+  for (let index = 1; index <= sorted.length; index += 1) {
+    const current = sorted[index];
+    if (current === previous + 1) {
+      previous = current;
+      continue;
+    }
+    ranges.push(start === previous ? `${start}` : `${start}-${previous}`);
+    start = current;
+    previous = current;
+  }
+
+  return ranges.join("、");
+}
+
 function renderSheetSvg(sheet, settings, paletteIndex) {
   const boardW = settings.boardWidth;
   const boardH = settings.boardHeight;
@@ -435,6 +499,18 @@ function renderResults(result) {
     <article class="stat-card"><span>整体利用率</span><strong>${formatPercent(totals.utilization)}</strong><small>板件面积 ${formatArea(totals.usedArea)}</small></article>
     <article class="stat-card"><span>已排板件</span><strong>${totals.placedPartCount}<em>片</em></strong><small>共录入 ${totals.partCount} 片</small></article>
   `;
+  elements.printSummary.innerHTML = `
+    <div>
+      <strong>${escapeHtml(state.projectName || "开料项目")}</strong>
+      <span>${new Date().toLocaleString("zh-CN", { hour12: false })}</span>
+    </div>
+    <dl>
+      <div><dt>标准板</dt><dd>${result.settings.boardWidth} × ${result.settings.boardHeight} mm</dd></div>
+      <div><dt>板材张数</dt><dd>${totals.sheetCount} 张</dd></div>
+      <div><dt>封边领料</dt><dd>${totals.edgeBandOrderMeters} 米</dd></div>
+      <div><dt>整体利用率</dt><dd>${formatPercent(totals.utilization)}</dd></div>
+    </dl>
+  `;
 
   const alerts = [];
   if (result.invalidParts.length) {
@@ -449,11 +525,22 @@ function renderResults(result) {
   if (!result.sheets.length) {
     elements.sheetList.innerHTML = '<div class="alert error">没有可生成的排版图，请先检查板件尺寸和数量。</div>';
   } else {
-    elements.sheetList.innerHTML = result.sheets
-      .map((sheet, sheetIndex) => `
+    const sheetGroups = groupSheetsByLayout(result.sheets);
+    elements.sheetList.innerHTML = sheetGroups
+      .map((group, sheetIndex) => {
+        const sheet = group.representative;
+        const sheetLabel = group.count > 1
+          ? `第 ${formatSheetNumbers(group.sheetNumbers)} 张`
+          : `第 ${sheet.number} 张`;
+        const countLabel = group.count > 1 ? `<b class="sheet-count-badge">同版 × ${group.count} 张</b>` : "";
+        return `
         <article class="sheet-card">
           <div class="sheet-card-head">
-            <div><strong>${escapeHtml(sheet.material)} · 第 ${sheet.number} 张</strong><span>${result.settings.boardWidth} × ${result.settings.boardHeight} mm · ${sheet.placements.length} 片</span></div>
+            <div>
+              <strong>${escapeHtml(sheet.material)} · ${sheetLabel}</strong>
+              <span>${result.settings.boardWidth} × ${result.settings.boardHeight} mm · 单张 ${sheet.placements.length} 片${group.count > 1 ? ` · 共 ${group.count} 张同版` : ""}</span>
+            </div>
+            ${countLabel}
             <span class="usage-pill">利用率 ${formatPercent(sheet.utilization)}</span>
           </div>
           <div class="sheet-visual-wrap">
@@ -468,7 +555,8 @@ function renderResults(result) {
             </div>
           </div>
         </article>
-      `)
+      `;
+      })
       .join("");
   }
 
