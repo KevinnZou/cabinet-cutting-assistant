@@ -122,6 +122,18 @@ test("支持尺寸等号数量写法和行内封边词", () => {
   assert.equal(result.parts[1].edgeShort, 1);
 });
 
+test("支持无空格尺寸和长条双边封语义", () => {
+  const result = parsePartsText("地脚线2440*120=36块，（长条双边封）");
+
+  assert.equal(result.parts.length, 1);
+  assert.equal(result.parts[0].name, "地脚线");
+  assert.equal(result.parts[0].length, 2440);
+  assert.equal(result.parts[0].width, 120);
+  assert.equal(result.parts[0].quantity, 36);
+  assert.equal(result.parts[0].edgeLong, 2);
+  assert.equal(result.parts[0].edgeShort, 0);
+});
+
 test("支持以下都封边和显式不封边", () => {
   const result = parsePartsText(`
 颜色:暖白
