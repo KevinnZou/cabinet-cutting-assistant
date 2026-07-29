@@ -481,6 +481,16 @@ label em { color: #9aa49e; font-style: normal; font-weight: 500; }
 .stat-card.accent { color: var(--forest); border-color: #b7d35f; background: var(--lime); }
 .stat-card.accent span, .stat-card.accent small { color: #4d6317; }
 
+.material-summary { margin-top: 12px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.material-summary-card { padding: 15px; display: grid; gap: 12px; border: 1px solid var(--line); border-radius: 13px; background: white; }
+.material-summary-card > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.material-summary-card strong { color: var(--forest); font-size: 14px; }
+.material-summary-card span { color: var(--ink-soft); font-size: 10px; white-space: nowrap; }
+.material-summary-card dl { margin: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; }
+.material-summary-card dl div { padding: 9px; border-radius: 9px; background: #f5f7f4; }
+.material-summary-card dt { color: var(--ink-soft); font-size: 9px; }
+.material-summary-card dd { margin: 4px 0 0; color: var(--ink); font-size: 13px; font-weight: 850; }
+
 .result-alerts { display: grid; gap: 8px; margin-top: 12px; }
 .alert { padding: 12px 14px; border-radius: 10px; font-size: 12px; line-height: 1.6; }
 .alert.warning { border: 1px solid #efd19f; color: #815417; background: #fff7e9; }
@@ -536,6 +546,7 @@ label em { color: #9aa49e; font-style: normal; font-weight: 500; }
   .rules-card { position: static; }
   .workspace-head h1 { font-size: 34px; }
   .result-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .material-summary { grid-template-columns: 1fr; }
   .results-head { padding-right: 14px; }
   .result-actions { flex-wrap: wrap; justify-content: flex-end; }
   .footer { padding: 0 16px 30px; flex-wrap: wrap; gap: 10px 20px; }
@@ -570,6 +581,8 @@ label em { color: #9aa49e; font-style: normal; font-weight: 500; }
   .result-stats { gap: 7px; }
   .stat-card { padding: 14px; }
   .stat-card strong { font-size: 23px; }
+  .material-summary-card > div { align-items: flex-start; flex-direction: column; gap: 4px; }
+  .material-summary-card dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .sheet-card { padding: 12px; }
   .sheet-visual-wrap { grid-template-columns: 1fr; }
   .placement-list { grid-template-columns: 1fr 1fr; max-height: none; }
@@ -595,7 +608,17 @@ label em { color: #9aa49e; font-style: normal; font-weight: 500; }
   .print-summary dl div { padding: 8px 10px; border: 1px solid #dfe5df; border-radius: 8px; }
   .print-summary dt { color: #66736b; font-size: 9px; }
   .print-summary dd { margin: 4px 0 0; color: #14271e; font-size: 12px; font-weight: 800; }
+  .print-summary section { display: grid; gap: 8px; }
+  .print-summary h3 { margin: 0; font-size: 12px; }
+  .print-summary .material-summary-card { padding: 8px 10px; gap: 7px; break-inside: avoid; }
+  .print-summary .material-summary-card strong { font-size: 11px; }
+  .print-summary .material-summary-card span { font-size: 8px; }
+  .print-summary .material-summary-card dl { grid-template-columns: repeat(4, 1fr); gap: 5px; }
+  .print-summary .material-summary-card dl div { padding: 5px; border: 1px solid #e2e7e2; background: white; }
+  .print-summary .material-summary-card dt { font-size: 7px; }
+  .print-summary .material-summary-card dd { font-size: 9px; }
   .result-stats { display: none; }
+  .material-summary { display: none; }
   .result-alerts { margin-top: 8px; }
   .sheet-list { margin-top: 10px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .sheet-card { padding: 10px; break-inside: avoid; border-color: #d4dcd5; border-radius: 10px; }
