@@ -83,11 +83,11 @@ function normalizeCompactDimensions(lengthValue, lengthUnit, widthValue, widthUn
 }
 
 function parseCount(line) {
-  const sizeEqualsCount = line.match(/\b\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|m|米)?\s*x\s*\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|m|米)?\s*=\s*(\d+)\s*(?:片|块|件|个|pcs?|张)?/i);
+  const sizeEqualsCount = line.match(/\b\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|m|米)?\s*[x*]\s*\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|m|米)?\s*(?:=|@|\/)\s*(\d+)\s*(?:片|块|件|个|pcs?|p|张)?/i);
   if (sizeEqualsCount) return Math.max(1, Math.floor(toNumber(sizeEqualsCount[1], 1)));
 
-  const sizeParenCount = line.match(/\b\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|m|米)?\s*[x*]\s*\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|m|米)?\s*\(?\s*(\d+)\s*(?:片|块|件|个|pcs?|张)\s*\)?/i);
-  if (sizeParenCount) return Math.max(1, Math.floor(toNumber(sizeParenCount[1], 1)));
+  const sizeParenCount = line.match(/\b\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|m|米)?\s*[x*]\s*\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|m|米)?\s*(?:\(\s*(\d+)\s*(?:片|块|件|个|pcs?|p|张)?\s*\)|(\d+)\s*(?:片|块|件|个|pcs?|p|张))/i);
+  if (sizeParenCount) return Math.max(1, Math.floor(toNumber(sizeParenCount[1] || sizeParenCount[2], 1)));
 
   const equalCount = line.match(/(?:^|[:=\s])\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米)?\s*=\s*(\d+)\s*(?:片|块|件|个|pcs?|张)?/i);
   if (equalCount) return Math.max(1, Math.floor(toNumber(equalCount[1], 1)));
@@ -103,6 +103,10 @@ function parseCount(line) {
 
   const unitCount = line.match(/(?:^|[^\d.])(\d+)\s*(?:片|块|件|个|pcs|pc|张)/i);
   return unitCount ? Math.max(1, Math.floor(toNumber(unitCount[1], 1))) : 1;
+}
+
+function hasCountInstruction(line) {
+  return /(?:(?:=|@|\/)\s*\d+\s*(?:片|块|件|个|pcs?|p|张)?|\b(?:数量|数|qty|q|共)\s*[:=]?\s*\d+|\d+\s*(?:片|块|件|个|pcs?|p|张)|\d+\s*[x*]\s*\d+\s*[x*]\s*\d+|\(\s*\d+\s*\))/i.test(line);
 }
 
 function parseSize(line) {
@@ -197,26 +201,29 @@ function parseEdges(line) {
   if (/(?:4边|四边|四周|全封|全封边|封4边|封四边|四周封|周边封|门板封边|门.*四周封|都封4边|都封四边|封边\s*[:=]?\s*(?:4|四|四周|四边))/.test(line)) {
     edgeLong = 2;
     edgeShort = 2;
+  } else if (/(?:3边|三边|封3边|封三边)/.test(line)) {
+    edgeLong = 2;
+    edgeShort = 1;
   } else if (/(?:长条\s*(?:双边封|封双边|双边)|条子\s*(?:双边封|封双边|双边)|线条\s*(?:双边封|封双边|双边)|地脚线.*双边|全双边|双边封|封双边|两边封|封边\s*[:=]?\s*双边)/.test(line)) {
     edgeLong = 2;
-  } else if (/(?:全单边|单边封|封单边|封一边|一边封|余料.*单边|(?:^|\s|\(|（)单边(?:$|\s|\)|）)|都单边|封边\s*[:=]?\s*单边)/.test(line)) {
-    edgeLong = 1;
   } else if (/(?:不封边|不用封边|无需封边|免封边|不封|封边\s*[:=]?\s*(?:无|没有|0\s*[/,， ]\s*0))/.test(line)) {
     edgeLong = 0;
     edgeShort = 0;
-  } else if (/(?:双长边|长边\s*2|长\s*2|两条长边)/.test(line)) {
+  } else if (/(?:双长边?|两长边?|左右(?:都)?封|左边右边封|前后(?:都)?封|长边\s*2|长\s*2|两条长边)/.test(line)) {
     edgeLong = 2;
-  } else if (/(?:单长边|长边\s*1|长\s*1|一条长边|前封|后封)/.test(line)) {
+  } else if (/(?:单长边|长边\s*1|长\s*1|一条长边|左封|右封|前封|后封)/.test(line)) {
+    edgeLong = 1;
+  } else if (/(?:全单边|单边封|封单边|封一边|一边封|余料.*单边|(?:^|\s|\(|（)单边(?:$|\s|\)|）)|都单边|封边\s*[:=]?\s*单边)/.test(line)) {
     edgeLong = 1;
   }
 
-  if (/(?:双短边|短边\s*2|短\s*2|两条短边)/.test(line)) {
+  if (/(?:双短边?|两短边?|上下(?:都)?封|上边下边封|短边\s*2|短\s*2|两条短边)/.test(line)) {
     edgeShort = 2;
-  } else if (/(?:单短边|短边\s*1|短\s*1|一条短边|左封|右封)/.test(line)) {
+  } else if (/(?:单短边|短边\s*1|短\s*1|一条短边|上封|下封)/.test(line)) {
     edgeShort = 1;
   }
 
-  if (/(?:一长一短|一短一长|单长单短)/.test(line)) {
+  if (/(?:一长一短|一短一长|单长单短|长短各一)/.test(line)) {
     edgeLong = 1;
     edgeShort = 1;
   } else if (/(?:两长一短|双长一短)/.test(line)) {
@@ -242,7 +249,7 @@ function parseEdges(line) {
 }
 
 function hasEdgeInstruction(line) {
-  return /(?:封边|封单边|单边封|全单边|单边|双边封|封双边|全双边|两边封|长条\s*双边|条子\s*双边|线条\s*双边|地脚线.*双边|4边|四边|四周|周边|全封|长边|短边|一长一短|两长一短|两短一长|余料.*单边|门.*四周|不封边|不用封边|无需封边|免封边|不封)/.test(line);
+  return /(?:封边|封单边|单边封|全单边|单边|双边封|封双边|全双边|两边封|长条\s*双边|条子\s*双边|线条\s*双边|地脚线.*双边|3边|三边|4边|四边|四周|周边|全封|长边|短边|双长|两长|双短|两短|左右封|上下封|左封|右封|上封|下封|一长一短|长短各一|两长一短|两短一长|余料.*单边|门.*四周|不封边|不用封边|无需封边|免封边|不封)/.test(line);
 }
 
 function parseGrain(line) {
@@ -260,9 +267,9 @@ function parseName(line, sizeRaw) {
     .replace(/(?:颜色|色号|材质|板材|饰面|花色)\s*[:=]?\s*\S+/gi, " ")
     .replace(/(?:封边|封长边|长边封|封短边|短边封)\s*[:=]?\s*[012](?:\s*[/,， ]\s*[012])?/gi, " ")
     .replace(/封边\s*[:=]?\s*(?:四周|四边|4边|四|4|单边|双边|无|没有|不封|0\s*[/,， ]\s*0)/gi, " ")
-    .replace(/=\s*\d+\s*(?:片|块|件|个|pcs?|张)?/gi, " ")
+    .replace(/(?:=|@|\/)\s*\d+\s*(?:片|块|件|个|pcs?|p|张)?/gi, " ")
     .replace(/(?:长边|短边)\s*[:=]?\s*[012]/gi, " ")
-    .replace(/(?:长条\s*双边封|长条\s*封双边|长条\s*双边|条子\s*双边封|条子\s*封双边|条子\s*双边|线条\s*双边封|线条\s*封双边|线条\s*双边|全双边|双边封|封双边|两边封|全单边|单边封|封单边|封一边|一边封|单边|四边封|四周封|全封边|封4边|封四边|4边|四边|四周|周边封|全封|双长边|单长边|双短边|单短边|一条长边|两条长边|一条短边|两条短边|一长一短|两长一短|两短一长|不封边|不用封边|无需封边|免封边|不封|木纹|纹理|顺纹|竖纹|锁纹|方向固定|不可旋转|无纹|不锁|可旋转|自由旋转|横竖可调)/g, " ")
+    .replace(/(?:长条\s*双边封|长条\s*封双边|长条\s*双边|条子\s*双边封|条子\s*封双边|条子\s*双边|线条\s*双边封|线条\s*封双边|线条\s*双边|全双边|双边封|封双边|两边封|全单边|单边封|封单边|封一边|一边封|单边|三边封|封三边|3边|三边|四边封|四周封|全封边|封4边|封四边|4边|四边|四周|周边封|全封|双长边?|两长边?|单长边|双短边?|两短边?|单短边|左右封|上下封|左封|右封|上封|下封|一条长边|两条长边|一条短边|两条短边|一长一短|长短各一|两长一短|两短一长|不封边|不用封边|无需封边|免封边|不封|木纹|纹理|顺纹|竖纹|锁纹|方向固定|不可旋转|无纹|不锁|可旋转|自由旋转|横竖可调)/g, " ")
     .replace(/(?:封边\s*:?|边\s*:)/g, " ")
     .replace(/(?:^|\s)(?:双|单|两条|一条)?(?:长边|短边)(?:$|\s)/g, " ")
     .replace(/[()（）]/g, " ")
@@ -323,6 +330,7 @@ export function parsePartsText(text, options = {}) {
   const parts = [];
   let currentMaterial = parseOptions.defaultMaterial;
   let currentEdges = parseOptions.defaultEdges;
+  let currentEdgesExplicit = false;
   let segmentStart = 0;
   const lines = splitLines(text);
 
@@ -331,6 +339,7 @@ export function parsePartsText(text, options = {}) {
     if (isMaterialHeading(line)) {
       currentMaterial = nextMaterial;
       currentEdges = parseOptions.defaultEdges;
+      currentEdgesExplicit = false;
       segmentStart = parts.length;
       return;
     }
@@ -339,6 +348,7 @@ export function parsePartsText(text, options = {}) {
     if (!size) {
       if (hasEdgeInstruction(line)) {
         currentEdges = parseEdges(line);
+        currentEdgesExplicit = true;
         const futureOnly = /(?:以下|下面|后面|后续|往下|之后)/.test(line) && !/(?:以上|上面|前面|前述|之前)/.test(line);
         if (!futureOnly) {
           for (let partIndex = segmentStart; partIndex < parts.length; partIndex += 1) {
@@ -351,10 +361,12 @@ export function parsePartsText(text, options = {}) {
       } else if (
         index + 1 < lines.length &&
         parseSize(lines[index + 1]) &&
-        /^[\u4e00-\u9fa5A-Za-z0-9·\-\s]{2,5}$/.test(line)
+        /^[\u4e00-\u9fa5A-Za-z0-9·\-\s]{2,20}$/.test(line) &&
+        !/(?:客户|项目|说明|备注|请|需要|按照|照旧|同上|做|要|说|尺寸|数量|封边)/.test(line)
       ) {
         currentMaterial = line;
         currentEdges = parseOptions.defaultEdges;
+        currentEdgesExplicit = false;
         segmentStart = parts.length;
       } else {
         warnings.push(`第 ${index + 1} 行未识别到尺寸：${line}`);
@@ -365,6 +377,7 @@ export function parsePartsText(text, options = {}) {
     const material = nextMaterial;
     if (material && material !== currentMaterial) {
       currentEdges = parseOptions.defaultEdges;
+      currentEdgesExplicit = false;
       segmentStart = parts.length;
     }
     currentMaterial = material || currentMaterial;
@@ -372,9 +385,19 @@ export function parsePartsText(text, options = {}) {
     const edges = parsedEdges.explicit ? parsedEdges : currentEdges || parsedEdges;
     const parsedName = parseName(line, size.raw);
     const fallbackName = `板件 ${parts.length - segmentStart + 1}`;
+    const usedFallbackName =
+      parsedName === "未命名板件" ||
+      parsedName === material ||
+      !/[\u4e00-\u9fa5A-Za-z]/.test(parsedName);
+    const reviewFlags = [];
+    if (!material || material === "未分类") reviewFlags.push("颜色待确认");
+    if (!parsedEdges.explicit && !currentEdgesExplicit) reviewFlags.push("封边按默认单边");
+    if (!hasCountInstruction(line)) reviewFlags.push("数量按 1 片");
+    if (usedFallbackName) reviewFlags.push("板件名待确认");
+    if (size.normalizedDirection) reviewFlags.push("尺寸已按长边在前");
     const part = {
       name:
-        size.kind === "strip" && (parsedName === "未命名板件" || parsedName === material || !/[\u4e00-\u9fa5A-Za-z]/.test(parsedName))
+        size.kind === "strip" && usedFallbackName
           ? `条子 ${size.width}`
           : parsedName === "未命名板件"
             ? fallbackName
@@ -390,6 +413,7 @@ export function parsePartsText(text, options = {}) {
       edgeShort: edges.edgeShort,
       edgeExplicit: parsedEdges.explicit,
       sourceText: line,
+      reviewFlags,
     };
 
     if (part.length <= 0 || part.width <= 0) {
@@ -406,6 +430,7 @@ export function parsePartsText(text, options = {}) {
       lineCount: lines.length,
       partTypeCount: parts.length,
       pieceCount: parts.reduce((sum, part) => sum + part.quantity, 0),
+      reviewCount: parts.filter((part) => part.reviewFlags.length > 0).length,
     },
   };
 }
