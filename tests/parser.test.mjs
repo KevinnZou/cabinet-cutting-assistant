@@ -111,8 +111,8 @@ test("支持尺寸等号数量写法和行内封边词", () => {
 
   assert.equal(result.parts.length, 2);
   assert.equal(result.parts[0].name, "门板");
-  assert.equal(result.parts[0].length, 398);
-  assert.equal(result.parts[0].width, 690);
+  assert.equal(result.parts[0].length, 690);
+  assert.equal(result.parts[0].width, 398);
   assert.equal(result.parts[0].quantity, 16);
   assert.equal(result.parts[0].edgeLong, 1);
   assert.equal(result.parts[0].edgeShort, 0);
@@ -150,4 +150,95 @@ test("支持以下都封边和显式不封边", () => {
   assert.equal(result.parts[1].edgeShort, 2);
   assert.equal(result.parts[2].edgeLong, 0);
   assert.equal(result.parts[2].edgeShort, 0);
+});
+
+test("长宽顺序统一归一为长边在前，避免 2440 被当成宽边", () => {
+  const result = parsePartsText(`
+皓月白
+460X2440=14
+400X2440=20
+60X2440=3
+
+晓风胡桃
+600x2440=46
+500X2440=8
+400X2440=28
+60X2440=12
+`);
+
+  assert.equal(result.parts.length, 7);
+  assert.equal(result.stats.pieceCount, 131);
+  assert.deepEqual(
+    result.parts.map((part) => [part.material, part.length, part.width, part.quantity, part.edgeLong, part.edgeShort]),
+    [
+      ["皓月白", 2440, 460, 14, 1, 0],
+      ["皓月白", 2440, 400, 20, 1, 0],
+      ["皓月白", 2440, 60, 3, 1, 0],
+      ["晓风胡桃", 2440, 600, 46, 1, 0],
+      ["晓风胡桃", 2440, 500, 8, 1, 0],
+      ["晓风胡桃", 2440, 400, 28, 1, 0],
+      ["晓风胡桃", 2440, 60, 12, 1, 0],
+    ],
+  );
+});
+
+test("支持同一行多个规格并继承同一颜色", () => {
+  const result = parsePartsText("皓月白 460X2440=14，400X2440=20，60X2440=3");
+
+  assert.equal(result.parts.length, 3);
+  assert.deepEqual(
+    result.parts.map((part) => [part.material, part.length, part.width, part.quantity]),
+    [
+      ["皓月白", 2440, 460, 14],
+      ["皓月白", 2440, 400, 20],
+      ["皓月白", 2440, 60, 3],
+    ],
+  );
+});
+
+test("支持表格三列写法、括号数量和更多封边同义词", () => {
+  const result = parsePartsText(`
+颜色 晓风胡桃
+侧板 2440 550 2 双长边
+层板 760 520 4 封边：四周
+地脚线 2440*120（36块） 长条双边封
+背板 长1180 宽680 共2 不封
+`);
+
+  assert.equal(result.parts.length, 4);
+  assert.deepEqual(
+    result.parts.map((part) => [part.name, part.material, part.length, part.width, part.quantity, part.edgeLong, part.edgeShort]),
+    [
+      ["侧板", "晓风胡桃", 2440, 550, 2, 2, 0],
+      ["层板", "晓风胡桃", 760, 520, 4, 2, 2],
+      ["地脚线", "晓风胡桃", 2440, 120, 36, 2, 0],
+      ["背板", "晓风胡桃", 1180, 680, 2, 0, 0],
+    ],
+  );
+});
+
+test("以下都封只影响后续，普通全单边可回填当前颜色段", () => {
+  const futureOnly = parsePartsText(`
+颜色:暖白
+侧板 2440x550=2
+以下都封4边
+门板 700x400=2
+`);
+
+  assert.equal(futureOnly.parts[0].edgeLong, 1);
+  assert.equal(futureOnly.parts[0].edgeShort, 0);
+  assert.equal(futureOnly.parts[1].edgeLong, 2);
+  assert.equal(futureOnly.parts[1].edgeShort, 2);
+
+  const backfill = parsePartsText(`
+颜色:深秋胡桃
+244x55x29
+244x20x9
+全单边
+`);
+
+  assert.equal(backfill.parts[0].edgeLong, 1);
+  assert.equal(backfill.parts[0].edgeShort, 0);
+  assert.equal(backfill.parts[1].edgeLong, 1);
+  assert.equal(backfill.parts[1].edgeShort, 0);
 });
