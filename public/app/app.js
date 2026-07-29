@@ -34,6 +34,7 @@ const elements = {
   resultPlaceholder: document.getElementById("result-placeholder"),
   resultContent: document.getElementById("result-content"),
   resultStats: document.getElementById("result-stats"),
+  materialSummary: document.getElementById("material-summary"),
   printSummary: document.getElementById("print-summary"),
   resultAlerts: document.getElementById("result-alerts"),
   sheetList: document.getElementById("sheet-list"),
@@ -383,6 +384,26 @@ function formatPercent(value) {
   return `${value.toFixed(1)}%`;
 }
 
+function renderMaterialSummaryItems(materialSummaries) {
+  if (!materialSummaries?.length) return "";
+  return materialSummaries
+    .map((item) => `
+      <article class="material-summary-card">
+        <div>
+          <strong>${escapeHtml(item.material)}</strong>
+          <span>${item.partTypeCount} 种规格 · ${item.partCount} 片</span>
+        </div>
+        <dl>
+          <div><dt>板材</dt><dd>${item.sheetCount} 张</dd></div>
+          <div><dt>封边领料</dt><dd>${item.edgeBandOrderMeters} 米</dd></div>
+          <div><dt>净封边</dt><dd>${(item.edgeBandRawMm / 1000).toFixed(2)} 米</dd></div>
+          <div><dt>利用率</dt><dd>${formatPercent(item.utilization)}</dd></div>
+        </dl>
+      </article>
+    `)
+    .join("");
+}
+
 function createSheetSignature(sheet) {
   return JSON.stringify({
     material: sheet.material,
@@ -495,10 +516,11 @@ function renderResults(result) {
   const totals = result.totals;
   elements.resultStats.innerHTML = `
     <article class="stat-card accent"><span>板材用量</span><strong>${totals.sheetCount}<em>张</em></strong><small>${totals.materialCount} 种颜色 / 材质</small></article>
-    <article class="stat-card"><span>封边领料</span><strong>${totals.edgeBandOrderMeters}<em>米</em></strong><small>净用量 ${(totals.edgeBandRawMm / 1000).toFixed(2)} 米</small></article>
+    <article class="stat-card"><span>封边领料</span><strong>${totals.edgeBandOrderMeters}<em>米</em></strong><small>按颜色分别损耗取整后汇总</small></article>
     <article class="stat-card"><span>整体利用率</span><strong>${formatPercent(totals.utilization)}</strong><small>板件面积 ${formatArea(totals.usedArea)}</small></article>
     <article class="stat-card"><span>已排板件</span><strong>${totals.placedPartCount}<em>片</em></strong><small>共录入 ${totals.partCount} 片</small></article>
   `;
+  elements.materialSummary.innerHTML = renderMaterialSummaryItems(result.materialSummaries);
   elements.printSummary.innerHTML = `
     <div>
       <strong>${escapeHtml(state.projectName || "开料项目")}</strong>
@@ -510,6 +532,10 @@ function renderResults(result) {
       <div><dt>封边领料</dt><dd>${totals.edgeBandOrderMeters} 米</dd></div>
       <div><dt>整体利用率</dt><dd>${formatPercent(totals.utilization)}</dd></div>
     </dl>
+    <section>
+      <h3>按颜色汇总</h3>
+      ${renderMaterialSummaryItems(result.materialSummaries)}
+    </section>
   `;
 
   const alerts = [];
@@ -564,7 +590,7 @@ function renderResults(result) {
   elements.calculationNotes.innerHTML = `
     <div><span>板材计算</span><strong>按颜色 / 材质分板</strong><small>相同材质参与同一组二维排版，不同材质自动分开。</small></div>
     <div><span>切割余量</span><strong>${result.settings.kerf} mm 锯缝 · ${result.settings.trim} mm 修边</strong><small>板件之间预留锯缝，标准板四周扣除修边宽度。</small></div>
-    <div><span>封边公式</span><strong>${edgeFormula} = ${totals.edgeBandOrderMeters} m</strong><small>${result.settings.roundEdgeBand ? "损耗后按整米向上取整。" : "损耗后保留两位小数。"}</small></div>
+    <div><span>封边公式</span><strong>${edgeFormula}</strong><small>${result.settings.roundEdgeBand ? "不同颜色分别按整米向上取整，再汇总领料。" : "不同颜色分别保留两位小数，再汇总领料。"}</small></div>
   `;
 }
 
@@ -618,6 +644,18 @@ function exportCsv() {
     ["标准板", `${lastResult.settings.boardWidth} × ${lastResult.settings.boardHeight} mm`],
     ["板材张数", lastResult.totals.sheetCount],
     ["封边领料（米）", lastResult.totals.edgeBandOrderMeters],
+    [],
+    ["按颜色汇总"],
+    ["颜色/材质", "规格数", "片数", "板材张数", "封边净用量(米)", "封边领料(米)", "利用率"],
+    ...lastResult.materialSummaries.map((item) => [
+      item.material,
+      item.partTypeCount,
+      item.partCount,
+      item.sheetCount,
+      (item.edgeBandRawMm / 1000).toFixed(2),
+      item.edgeBandOrderMeters,
+      formatPercent(item.utilization),
+    ]),
     [],
     ["颜色/材质", "板号", "序号", "板件", "长度(mm)", "宽度(mm)", "旋转", "木纹锁定", "X(mm)", "Y(mm)"],
   ];
