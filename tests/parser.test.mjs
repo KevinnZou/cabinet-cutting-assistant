@@ -290,3 +290,42 @@ test("解析结果标注系统推断项供二次确认", () => {
   );
   assert.equal(result.stats.reviewCount, 1);
 });
+
+test("余料封边规则独立于板件封边并按颜色继承", () => {
+  const result = parsePartsText(`
+卡其灰
+侧板 2440x550=2 单边
+余料封双边，短边至少80mm
+
+暖白
+门板 700x400=2 四边
+余料不封，最小短边50
+`);
+
+  assert.deepEqual(
+    result.parts.map((part) => [part.material, part.edgeLong, part.edgeShort]),
+    [
+      ["卡其灰", 1, 0],
+      ["暖白", 2, 2],
+    ],
+  );
+  assert.deepEqual(result.materialRules, {
+    卡其灰: { leftoverEdgeMode: "2/0", minLeftoverWidth: 80 },
+    暖白: { leftoverEdgeMode: "0/0", minLeftoverWidth: 50 },
+  });
+  assert.equal(result.stats.materialRuleCount, 2);
+});
+
+test("支持指定颜色的余料多边封法", () => {
+  const result = parsePartsText(`
+皓月白
+2440x460=2
+晓风胡桃余料两长一短，保留100以上
+皓月白余料一长一短
+`);
+
+  assert.deepEqual(result.materialRules, {
+    晓风胡桃: { leftoverEdgeMode: "2/1", minLeftoverWidth: 100 },
+    皓月白: { leftoverEdgeMode: "1/1", minLeftoverWidth: 50 },
+  });
+});
