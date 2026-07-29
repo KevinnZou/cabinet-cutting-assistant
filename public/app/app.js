@@ -506,6 +506,150 @@ function renderSheetSvg(sheet, settings, paletteIndex) {
     </svg>`;
 }
 
+function createPrintDocument(result) {
+  const totals = result.totals;
+  const sheetGroups = groupSheetsByLayout(result.sheets);
+  const printedAt = new Date().toLocaleString("zh-CN", { hour12: false });
+  const materialRows = result.materialSummaries
+    .map((item) => `
+      <tr>
+        <td>${escapeHtml(item.material)}</td>
+        <td>${item.sheetCount} 张</td>
+        <td>${item.partCount} 片</td>
+        <td>${(item.edgeBandRawMm / 1000).toFixed(2)} 米</td>
+        <td>${item.edgeBandOrderMeters} 米</td>
+        <td>${formatPercent(item.utilization)}</td>
+      </tr>
+    `)
+    .join("");
+  const sheetCards = sheetGroups
+    .map((group, sheetIndex) => {
+      const sheet = group.representative;
+      const sheetLabel = group.count > 1
+        ? `第 ${formatSheetNumbers(group.sheetNumbers)} 张`
+        : `第 ${sheet.number} 张`;
+      const countLabel = group.count > 1 ? `<b>同版 × ${group.count} 张</b>` : "";
+      const placements = sheet.placements
+        .map((placement, index) => `
+          <tr>
+            <td>${index + 1}</td>
+            <td>${escapeHtml(placement.name)}</td>
+            <td>${placement.length} × ${placement.width}</td>
+            <td>${placement.rotated ? "旋转" : "正常"}${placement.grainLocked ? " / 木纹锁定" : ""}</td>
+          </tr>
+        `)
+        .join("");
+
+      return `
+        <section class="sheet-card">
+          <header>
+            <div>
+              <h3>${escapeHtml(sheet.material)} · ${sheetLabel}</h3>
+              <p>${result.settings.boardWidth} × ${result.settings.boardHeight} mm · 单张 ${sheet.placements.length} 片 · 利用率 ${formatPercent(sheet.utilization)}</p>
+            </div>
+            ${countLabel}
+          </header>
+          <div class="sheet-layout">
+            ${renderSheetSvg(sheet, result.settings, sheetIndex)}
+            <table>
+              <thead><tr><th>#</th><th>板件</th><th>尺寸 mm</th><th>方向</th></tr></thead>
+              <tbody>${placements}</tbody>
+            </table>
+          </div>
+        </section>
+      `;
+    })
+    .join("");
+
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>${escapeHtml(state.projectName || "开料项目")} - 打印结果</title>
+  <style>
+    @page { size: A4; margin: 10mm; }
+    * { box-sizing: border-box; }
+    body { margin: 0; color: #14271e; background: white; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; font-size: 11px; }
+    h1, h2, h3, p { margin: 0; }
+    .print-report { display: grid; gap: 12px; }
+    .report-head { padding-bottom: 10px; display: flex; justify-content: space-between; gap: 20px; border-bottom: 2px solid #14271e; }
+    .report-head h1 { font-size: 20px; }
+    .report-head p { margin-top: 5px; color: #66736c; }
+    .report-meta { text-align: right; color: #66736c; line-height: 1.7; white-space: nowrap; }
+    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+    .stat { padding: 9px 10px; border: 1px solid #d8e0d9; border-radius: 8px; }
+    .stat span { display: block; color: #66736c; font-size: 9px; }
+    .stat strong { display: block; margin-top: 4px; font-size: 15px; }
+    .summary-block { break-inside: avoid; }
+    .summary-block h2 { margin-bottom: 7px; font-size: 13px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 5px 6px; border: 1px solid #dfe5df; text-align: left; vertical-align: top; }
+    th { color: #536259; background: #f2f5f2; font-size: 9px; }
+    td { font-size: 9px; }
+    .sheet-card { padding: 9px; display: grid; gap: 8px; border: 1px solid #cfd9d1; border-radius: 8px; break-inside: avoid; page-break-inside: avoid; }
+    .sheet-card header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+    .sheet-card h3 { font-size: 12px; }
+    .sheet-card p { margin-top: 3px; color: #66736c; font-size: 8px; }
+    .sheet-card b { padding: 4px 6px; border-radius: 999px; color: white; background: #14271e; font-size: 8px; white-space: nowrap; }
+    .sheet-layout { display: grid; grid-template-columns: minmax(130px, .9fr) minmax(190px, 1.1fr); gap: 8px; align-items: start; }
+    .sheet-svg { width: 100%; max-height: 285px; border: 1px solid #aeb9b1; background: #eef2ed; }
+    @media print {
+      .sheet-card { margin-bottom: 8px; }
+      .sheet-layout { grid-template-columns: minmax(120px, .85fr) minmax(180px, 1.15fr); }
+    }
+  </style>
+</head>
+<body>
+  <main class="print-report">
+    <header class="report-head">
+      <div>
+        <h1>${escapeHtml(state.projectName || "开料项目")}</h1>
+        <p>柜体板开料计算结果</p>
+      </div>
+      <div class="report-meta">
+        <div>打印时间：${printedAt}</div>
+        <div>标准板：${result.settings.boardWidth} × ${result.settings.boardHeight} mm</div>
+      </div>
+    </header>
+
+    <section class="stats">
+      <div class="stat"><span>板材用量</span><strong>${totals.sheetCount} 张</strong></div>
+      <div class="stat"><span>封边领料</span><strong>${totals.edgeBandOrderMeters} 米</strong></div>
+      <div class="stat"><span>整体利用率</span><strong>${formatPercent(totals.utilization)}</strong></div>
+      <div class="stat"><span>已排板件</span><strong>${totals.placedPartCount} 片</strong></div>
+    </section>
+
+    <section class="summary-block">
+      <h2>按颜色汇总</h2>
+      <table>
+        <thead><tr><th>颜色 / 材质</th><th>板材</th><th>片数</th><th>封边净用量</th><th>封边领料</th><th>利用率</th></tr></thead>
+        <tbody>${materialRows}</tbody>
+      </table>
+    </section>
+
+    ${sheetCards}
+  </main>
+</body>
+</html>`;
+}
+
+function printResult() {
+  if (!lastResult) {
+    showToast("请先完成排版计算");
+    return;
+  }
+  const printWindow = window.open("", "_blank");
+  if (!printWindow) {
+    showToast("浏览器拦截了打印窗口，请允许弹窗后重试");
+    return;
+  }
+  printWindow.document.open();
+  printWindow.document.write(createPrintDocument(lastResult));
+  printWindow.document.close();
+  printWindow.focus();
+  setTimeout(() => printWindow.print(), 250);
+}
+
 function renderResults(result) {
   lastResult = result;
   elements.resultPlaceholder.hidden = true;
@@ -787,6 +931,6 @@ elements.importFile.addEventListener("change", () => {
   if (elements.importFile.files?.[0]) importProject(elements.importFile.files[0]);
 });
 document.getElementById("csv-button").addEventListener("click", exportCsv);
-document.getElementById("print-button").addEventListener("click", () => window.print());
+document.getElementById("print-button").addEventListener("click", printResult);
 
 renderAll();
