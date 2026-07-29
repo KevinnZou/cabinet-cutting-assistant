@@ -44,6 +44,15 @@ const elements = {
   importFile: document.getElementById("import-file"),
   batchEdgeSelect: document.getElementById("batch-edge-select"),
   applyEdgeButton: document.getElementById("apply-edge-button"),
+  applyGrainButton: document.getElementById("apply-grain-button"),
+  applyMaterialButton: document.getElementById("apply-material-button"),
+  batchGrainSelect: document.getElementById("batch-grain-select"),
+  batchMaterialInput: document.getElementById("batch-material-input"),
+  deleteSelectedButton: document.getElementById("delete-selected-button"),
+  mergeDuplicatesButton: document.getElementById("merge-duplicates-button"),
+  selectAllParts: document.getElementById("select-all-parts"),
+  selectionSummary: document.getElementById("selection-summary"),
+  partsReview: document.getElementById("parts-review"),
   rawInput: document.getElementById("raw-input"),
   parseButton: document.getElementById("parse-button"),
   appendParse: document.getElementById("append-parse"),
@@ -51,6 +60,10 @@ const elements = {
   ocrButton: document.getElementById("ocr-button"),
   ocrFile: document.getElementById("ocr-file"),
   ocrStatus: document.getElementById("ocr-status"),
+  resultQuality: document.getElementById("result-quality"),
+  resultFilterBar: document.getElementById("result-filter-bar"),
+  resultMaterialFilter: document.getElementById("result-material-filter"),
+  layoutSummary: document.getElementById("layout-summary"),
   toast: document.getElementById("toast"),
 };
 
@@ -69,6 +82,7 @@ function newPart(overrides = {}) {
     grainLocked: false,
     edgeLong: 1,
     edgeShort: 0,
+    reviewFlags: [],
     ...overrides,
   };
 }
@@ -105,6 +119,8 @@ let state = loadState();
 let lastResult = null;
 let saveTimer = null;
 let toastTimer = null;
+let calculationWorker = null;
+let selectedPartIds = new Set();
 
 function escapeHtml(value) {
   return String(value)
@@ -165,37 +181,117 @@ function edgeValueFromPart(part) {
   return `${Math.max(0, Math.min(2, Number(part.edgeLong) || 0))}/${Math.max(0, Math.min(2, Number(part.edgeShort) || 0))}`;
 }
 
+function edgeLabelFromPart(part) {
+  const value = edgeValueFromPart(part);
+  return EDGE_PRESETS.find((preset) => preset.value === value)?.label || `长边 ${part.edgeLong} / 短边 ${part.edgeShort}`;
+}
+
 function edgePresetOptions(selectedValue = "1/0") {
   return EDGE_PRESETS
     .map((preset) => `<option value="${preset.value}" ${selectedValue === preset.value ? "selected" : ""}>${preset.label}</option>`)
     .join("");
 }
 
+function analyzeParts(parts = state.parts) {
+  const invalidIds = new Set();
+  const duplicateGroups = new Map();
+  let reviewCount = 0;
+  let pieceCount = 0;
+
+  for (const part of parts) {
+    const length = Number(part.length);
+    const width = Number(part.width);
+    const quantity = Number(part.quantity);
+    if (
+      !Number.isFinite(length) ||
+      !Number.isFinite(width) ||
+      !Number.isFinite(quantity) ||
+      length <= 0 ||
+      width <= 0 ||
+      quantity < 1 ||
+      !Number.isInteger(quantity) ||
+      !String(part.material || "").trim()
+    ) {
+      invalidIds.add(part.id);
+    }
+    pieceCount += Number.isFinite(quantity) && quantity > 0 ? Math.floor(quantity) : 0;
+    if (part.reviewFlags?.length) reviewCount += 1;
+
+    const signature = [
+      String(part.name || "").trim(),
+      String(part.material || "").trim(),
+      length,
+      width,
+      Boolean(part.grainLocked),
+      Number(part.edgeLong),
+      Number(part.edgeShort),
+    ].join("|");
+    const group = duplicateGroups.get(signature) || [];
+    group.push(part);
+    duplicateGroups.set(signature, group);
+  }
+
+  const duplicates = [...duplicateGroups.values()].filter((group) => group.length > 1);
+  return { invalidIds, duplicates, reviewCount, pieceCount };
+}
+
+function renderPartsReview() {
+  const analysis = analyzeParts();
+  const messages = [];
+  if (analysis.invalidIds.size) messages.push(`<b>${analysis.invalidIds.size} 行数据无效</b>`);
+  if (analysis.reviewCount) messages.push(`<b>${analysis.reviewCount} 行含系统推断项</b>`);
+  if (analysis.duplicates.length) messages.push(`<b>${analysis.duplicates.length} 组重复规格可合并</b>`);
+
+  elements.partsReview.className = `parts-review ${analysis.invalidIds.size ? "has-error" : analysis.reviewCount || analysis.duplicates.length ? "has-warning" : "is-ready"}`;
+  elements.partsReview.innerHTML = messages.length
+    ? `<span>复核提示</span><div>${messages.join("<i>·</i>")}<small>标记仅用于提醒，确认无误后可直接计算。</small></div>`
+    : `<span>数据就绪</span><div><b>尺寸、数量和颜色格式检查通过</b><small>计算后还会再次核验排入数量、越界和重叠。</small></div>`;
+}
+
+function renderBatchToolbar() {
+  selectedPartIds = new Set([...selectedPartIds].filter((id) => state.parts.some((part) => part.id === id)));
+  const selectedCount = selectedPartIds.size;
+  const allSelected = state.parts.length > 0 && selectedCount === state.parts.length;
+  elements.selectAllParts.checked = allSelected;
+  elements.selectAllParts.indeterminate = selectedCount > 0 && !allSelected;
+  elements.selectionSummary.textContent = selectedCount ? `已选 ${selectedCount} 项` : "选择全部";
+  document.querySelectorAll(".batch-action").forEach((button) => {
+    button.disabled = selectedCount === 0;
+  });
+}
+
 function renderParts() {
+  const analysis = analyzeParts();
   if (!state.parts.length) {
-    elements.partsBody.innerHTML = '<tr class="empty-row"><td colspan="6">暂无板件，点击“添加板件”开始录入。</td></tr>';
+    elements.partsBody.innerHTML = '<tr class="empty-row"><td colspan="7">暂无板件，点击“添加板件”开始录入。</td></tr>';
   } else {
     elements.partsBody.innerHTML = state.parts
       .map(
         (part) => `
-          <tr data-id="${escapeHtml(part.id)}">
-            <td>
+          <tr data-id="${escapeHtml(part.id)}" class="${analysis.invalidIds.has(part.id) ? "row-invalid" : part.reviewFlags?.length ? "row-review" : ""}">
+            <td data-label="选择" class="select-cell">
+              <input class="row-select" type="checkbox" aria-label="选择 ${escapeHtml(part.name)}" ${selectedPartIds.has(part.id) ? "checked" : ""} />
+            </td>
+            <td data-label="板件 / 颜色">
               <div class="stack-input">
-                <input aria-label="板件名称" data-field="name" type="text" maxlength="40" value="${escapeHtml(part.name)}" />
+                <div class="part-name-line">
+                  <input aria-label="板件名称" data-field="name" type="text" maxlength="40" value="${escapeHtml(part.name)}" />
+                  ${part.reviewFlags?.length ? `<span class="review-badge" title="${escapeHtml(part.reviewFlags.join("；"))}">待确认</span>` : ""}
+                </div>
                 <input aria-label="颜色或材质" data-field="material" type="text" maxlength="40" value="${escapeHtml(part.material)}" />
               </div>
             </td>
-            <td>
+            <td data-label="长 × 宽（mm）">
               <div class="size-fields">
                 <input aria-label="板件长度" data-field="length" type="number" min="1" max="10000" step="1" value="${part.length}" />
                 <span>×</span>
                 <input aria-label="板件宽度" data-field="width" type="number" min="1" max="10000" step="1" value="${part.width}" />
               </div>
             </td>
-            <td><input class="quantity-input" aria-label="数量" data-field="quantity" type="number" min="1" max="999" step="1" value="${part.quantity}" /></td>
-            <td><input class="grain-check" aria-label="锁定木纹方向" data-field="grainLocked" type="checkbox" ${part.grainLocked ? "checked" : ""} /></td>
-            <td><select class="edge-select" aria-label="封边方式" data-field="edgePreset">${edgePresetOptions(edgeValueFromPart(part))}</select></td>
-            <td><button class="delete-button" type="button" data-action="delete" aria-label="删除 ${escapeHtml(part.name)}">×</button></td>
+            <td data-label="数量"><input class="quantity-input" aria-label="数量" data-field="quantity" type="number" min="1" max="9999" step="1" value="${part.quantity}" /></td>
+            <td data-label="木纹"><input class="grain-check" aria-label="锁定木纹方向" data-field="grainLocked" type="checkbox" ${part.grainLocked ? "checked" : ""} /></td>
+            <td data-label="封边方式"><select class="edge-select" aria-label="封边方式" data-field="edgePreset">${edgePresetOptions(edgeValueFromPart(part))}</select></td>
+            <td data-label="操作"><button class="delete-button" type="button" data-action="delete" aria-label="删除 ${escapeHtml(part.name)}">×</button></td>
           </tr>
         `,
       )
@@ -205,6 +301,8 @@ function renderParts() {
   const count = state.parts.reduce((sum, part) => sum + Math.max(0, Number(part.quantity) || 0), 0);
   elements.partsSummary.textContent = `${state.parts.length} 种板件 · ${count} 片`;
   elements.calculationReady.textContent = count ? `共 ${count} 片，等待排版` : "请先添加板件";
+  renderPartsReview();
+  renderBatchToolbar();
   updateRuleSummary();
 }
 
@@ -227,6 +325,7 @@ function resetResults() {
   elements.resultPlaceholder.hidden = false;
   elements.resultContent.hidden = true;
   elements.resultActions.hidden = true;
+  elements.resultFilterBar.hidden = true;
   elements.resultCaption.textContent = "结果仅在当前设备生成";
 }
 
@@ -272,10 +371,12 @@ function parseRawInput() {
       grainLocked: part.grainLocked,
       edgeLong: part.edgeLong,
       edgeShort: part.edgeShort,
+      reviewFlags: part.reviewFlags,
     }),
   );
 
   state.parts = elements.appendParse.checked ? [...state.parts, ...parsedParts] : parsedParts;
+  selectedPartIds.clear();
   renderParts();
   resetResults();
   renderParseFeedback(result);
@@ -352,32 +453,99 @@ function updateStateFromPartInput(target) {
     const preset = edgePresetFromValue(target.value);
     part.edgeLong = preset.edgeLong;
     part.edgeShort = preset.edgeShort;
+    part.reviewFlags = (part.reviewFlags || []).filter((flag) => !flag.includes("封边"));
   } else if (target.type === "checkbox") part[field] = target.checked;
   else if (target.type === "number" || target.tagName === "SELECT") part[field] = parseNumericValue(target.value);
   else part[field] = target.value;
 
+  if (field === "material") part.reviewFlags = (part.reviewFlags || []).filter((flag) => !flag.includes("颜色"));
+  if (field === "quantity") part.reviewFlags = (part.reviewFlags || []).filter((flag) => !flag.includes("数量"));
+  if (field === "name") part.reviewFlags = (part.reviewFlags || []).filter((flag) => !flag.includes("板件名"));
+  if (field === "length" || field === "width") part.reviewFlags = (part.reviewFlags || []).filter((flag) => !flag.includes("尺寸"));
+
   const count = state.parts.reduce((sum, item) => sum + Math.max(0, Number(item.quantity) || 0), 0);
   elements.partsSummary.textContent = `${state.parts.length} 种板件 · ${count} 片`;
   elements.calculationReady.textContent = count ? `共 ${count} 片，等待排版` : "请先添加板件";
+  renderPartsReview();
   resetResults();
   saveState();
 }
 
-function applyBatchEdgePreset() {
-  if (!state.parts.length) {
-    showToast("请先添加或解析板件");
-    return;
-  }
-  const preset = edgePresetFromValue(elements.batchEdgeSelect.value);
-  state.parts = state.parts.map((part) => ({
-    ...part,
-    edgeLong: preset.edgeLong,
-    edgeShort: preset.edgeShort,
-  }));
+function selectedParts() {
+  return state.parts.filter((part) => selectedPartIds.has(part.id));
+}
+
+function finishBatchChange(message) {
   renderParts();
   resetResults();
   saveState();
-  showToast(`已将全部板件改为${preset.label}`);
+  showToast(message);
+}
+
+function applyBatchEdgePreset() {
+  const targets = selectedParts();
+  if (!targets.length) return;
+  const preset = edgePresetFromValue(elements.batchEdgeSelect.value);
+  targets.forEach((part) => {
+    part.edgeLong = preset.edgeLong;
+    part.edgeShort = preset.edgeShort;
+    part.reviewFlags = (part.reviewFlags || []).filter((flag) => !flag.includes("封边"));
+  });
+  finishBatchChange(`已将所选 ${targets.length} 项改为${preset.label}`);
+}
+
+function applyBatchGrain() {
+  const targets = selectedParts();
+  if (!targets.length) return;
+  const grainLocked = elements.batchGrainSelect.value === "true";
+  targets.forEach((part) => {
+    part.grainLocked = grainLocked;
+  });
+  finishBatchChange(`已将所选 ${targets.length} 项设为${grainLocked ? "锁定木纹" : "允许旋转"}`);
+}
+
+function applyBatchMaterial() {
+  const material = elements.batchMaterialInput.value.trim();
+  const targets = selectedParts();
+  if (!targets.length) return;
+  if (!material) {
+    showToast("请先填写颜色或材质");
+    elements.batchMaterialInput.focus();
+    return;
+  }
+  targets.forEach((part) => {
+    part.material = material;
+    part.reviewFlags = (part.reviewFlags || []).filter((flag) => !flag.includes("颜色"));
+  });
+  elements.batchMaterialInput.value = "";
+  finishBatchChange(`已将所选 ${targets.length} 项改为${material}`);
+}
+
+function deleteSelectedParts() {
+  const count = selectedPartIds.size;
+  if (!count) return;
+  if (!window.confirm(`确认删除所选 ${count} 项板件？`)) return;
+  state.parts = state.parts.filter((part) => !selectedPartIds.has(part.id));
+  selectedPartIds.clear();
+  finishBatchChange(`已删除 ${count} 项板件`);
+}
+
+function mergeDuplicateParts() {
+  const { duplicates } = analyzeParts();
+  if (!duplicates.length) {
+    showToast("当前没有完全相同的重复规格");
+    return;
+  }
+  const removedIds = new Set();
+  duplicates.forEach((group) => {
+    const [keeper, ...rest] = group;
+    keeper.quantity = group.reduce((sum, part) => sum + Math.max(0, Number(part.quantity) || 0), 0);
+    keeper.reviewFlags = [...new Set(group.flatMap((part) => part.reviewFlags || []))];
+    rest.forEach((part) => removedIds.add(part.id));
+  });
+  state.parts = state.parts.filter((part) => !removedIds.has(part.id));
+  selectedPartIds.clear();
+  finishBatchChange(`已合并 ${duplicates.length} 组重复规格`);
 }
 
 function formatPercent(value) {
@@ -418,6 +586,8 @@ function createSheetSignature(sheet) {
       placedHeight: placement.placedHeight,
       rotated: Boolean(placement.rotated),
       grainLocked: Boolean(placement.grainLocked),
+      edgeLong: placement.edgeLong,
+      edgeShort: placement.edgeShort,
     })),
   });
 }
@@ -506,6 +676,52 @@ function renderSheetSvg(sheet, settings, paletteIndex) {
     </svg>`;
 }
 
+function renderSheetCards(result, material = "") {
+  const visibleSheets = material
+    ? result.sheets.filter((sheet) => sheet.material === material)
+    : result.sheets;
+  const sheetGroups = groupSheetsByLayout(visibleSheets);
+  elements.layoutSummary.textContent = `${visibleSheets.length} 张板 · ${sheetGroups.length} 种排版`;
+
+  if (!visibleSheets.length) {
+    elements.sheetList.innerHTML = '<div class="alert warning">该颜色暂时没有可展示的排版图。</div>';
+    return;
+  }
+
+  elements.sheetList.innerHTML = sheetGroups
+    .map((group, sheetIndex) => {
+      const sheet = group.representative;
+      const sheetLabel = group.count > 1
+        ? `第 ${formatSheetNumbers(group.sheetNumbers)} 张`
+        : `第 ${sheet.number} 张`;
+      const countLabel = group.count > 1 ? `<b class="sheet-count-badge">同版 × ${group.count} 张</b>` : "";
+      return `
+      <article class="sheet-card">
+        <div class="sheet-card-head">
+          <div>
+            <strong>${escapeHtml(sheet.material)} · ${sheetLabel}</strong>
+            <span>${result.settings.boardWidth} × ${result.settings.boardHeight} mm · 单张 ${sheet.placements.length} 片${group.count > 1 ? ` · 共 ${group.count} 张同版` : ""}</span>
+          </div>
+          ${countLabel}
+          <span class="usage-pill">利用率 ${formatPercent(sheet.utilization)}</span>
+        </div>
+        <div class="sheet-visual-wrap">
+          ${renderSheetSvg(sheet, result.settings, sheetIndex)}
+          <div class="placement-list">
+            ${sheet.placements.map((placement, index) => `
+              <div class="placement-row">
+                <i>${index + 1}</i>
+                <div><strong>${escapeHtml(placement.name)}</strong><span>${placement.length} × ${placement.width} mm · ${edgeLabelFromPart(placement)}${placement.rotated ? " · 已旋转" : ""}${placement.grainLocked ? " · 木纹锁定" : ""}</span></div>
+              </div>
+            `).join("")}
+          </div>
+        </div>
+      </article>
+    `;
+    })
+    .join("");
+}
+
 function createPrintDocument(result) {
   const totals = result.totals;
   const sheetGroups = groupSheetsByLayout(result.sheets);
@@ -535,7 +751,7 @@ function createPrintDocument(result) {
             <td>${index + 1}</td>
             <td>${escapeHtml(placement.name)}</td>
             <td>${placement.length} × ${placement.width}</td>
-            <td>${placement.rotated ? "旋转" : "正常"}${placement.grainLocked ? " / 木纹锁定" : ""}</td>
+            <td>${edgeLabelFromPart(placement)} / ${placement.rotated ? "旋转" : "正常"}${placement.grainLocked ? " / 木纹锁定" : ""}</td>
           </tr>
         `)
         .join("");
@@ -552,7 +768,7 @@ function createPrintDocument(result) {
           <div class="sheet-layout">
             ${renderSheetSvg(sheet, result.settings, sheetIndex)}
             <table>
-              <thead><tr><th>#</th><th>板件</th><th>尺寸 mm</th><th>方向</th></tr></thead>
+              <thead><tr><th>#</th><th>板件</th><th>尺寸 mm</th><th>封边 / 方向</th></tr></thead>
               <tbody>${placements}</tbody>
             </table>
           </div>
@@ -658,6 +874,15 @@ function renderResults(result) {
   elements.resultCaption.textContent = `${state.projectName} · ${new Date().toLocaleString("zh-CN", { hour12: false })}`;
 
   const totals = result.totals;
+  const productionReady =
+    totals.integrityOk &&
+    result.invalidParts.length === 0 &&
+    result.oversized.length === 0 &&
+    totals.placedPartCount === totals.partCount;
+  elements.resultQuality.className = `result-quality ${productionReady ? "is-ready" : "needs-review"}`;
+  elements.resultQuality.innerHTML = productionReady
+    ? `<i>✓</i><div><strong>生产校验通过</strong><span>${totals.partCount} 片已全部排入，无越界、重叠或少算；已比较 ${totals.strategyCount || 1} 套排版策略。</span></div>`
+    : `<i>!</i><div><strong>结果需要处理后再下单</strong><span>请先解决下方异常项，系统不会把异常结果标记为可生产。</span></div>`;
   elements.resultStats.innerHTML = `
     <article class="stat-card accent"><span>板材用量</span><strong>${totals.sheetCount}<em>张</em></strong><small>${totals.materialCount} 种颜色 / 材质</small></article>
     <article class="stat-card"><span>封边领料</span><strong>${totals.edgeBandOrderMeters}<em>米</em></strong><small>按颜色分别损耗取整后汇总</small></article>
@@ -697,40 +922,15 @@ function renderResults(result) {
 
   if (!result.sheets.length) {
     elements.sheetList.innerHTML = '<div class="alert error">没有可生成的排版图，请先检查板件尺寸和数量。</div>';
+    elements.resultFilterBar.hidden = true;
   } else {
-    const sheetGroups = groupSheetsByLayout(result.sheets);
-    elements.sheetList.innerHTML = sheetGroups
-      .map((group, sheetIndex) => {
-        const sheet = group.representative;
-        const sheetLabel = group.count > 1
-          ? `第 ${formatSheetNumbers(group.sheetNumbers)} 张`
-          : `第 ${sheet.number} 张`;
-        const countLabel = group.count > 1 ? `<b class="sheet-count-badge">同版 × ${group.count} 张</b>` : "";
-        return `
-        <article class="sheet-card">
-          <div class="sheet-card-head">
-            <div>
-              <strong>${escapeHtml(sheet.material)} · ${sheetLabel}</strong>
-              <span>${result.settings.boardWidth} × ${result.settings.boardHeight} mm · 单张 ${sheet.placements.length} 片${group.count > 1 ? ` · 共 ${group.count} 张同版` : ""}</span>
-            </div>
-            ${countLabel}
-            <span class="usage-pill">利用率 ${formatPercent(sheet.utilization)}</span>
-          </div>
-          <div class="sheet-visual-wrap">
-            ${renderSheetSvg(sheet, result.settings, sheetIndex)}
-            <div class="placement-list">
-              ${sheet.placements.map((placement, index) => `
-                <div class="placement-row">
-                  <i>${index + 1}</i>
-                  <div><strong>${escapeHtml(placement.name)}</strong><span>${placement.length} × ${placement.width} mm${placement.rotated ? " · 已旋转" : ""}${placement.grainLocked ? " · 木纹锁定" : ""}</span></div>
-                </div>
-              `).join("")}
-            </div>
-          </div>
-        </article>
-      `;
-      })
-      .join("");
+    const materials = result.materialSummaries.map((item) => item.material);
+    elements.resultMaterialFilter.innerHTML = [
+      '<option value="">全部颜色</option>',
+      ...materials.map((material) => `<option value="${escapeHtml(material)}">${escapeHtml(material)}</option>`),
+    ].join("");
+    elements.resultFilterBar.hidden = materials.length < 2;
+    renderSheetCards(result);
   }
 
   const edgeFormula = `${(totals.edgeBandRawMm / 1000).toFixed(2)} m × (1 + ${result.settings.edgeLoss}%)`;
@@ -741,25 +941,72 @@ function renderResults(result) {
   `;
 }
 
-function calculate() {
+function runOptimizationInWorker(parts, settings) {
+  if (!("Worker" in window)) {
+    return Promise.resolve(optimizeCutting(parts, settings));
+  }
+
+  calculationWorker?.terminate();
+  calculationWorker = new Worker("./optimizer-worker.js?v=20260729-4", { type: "module" });
+  const requestId = makeId();
+
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      calculationWorker?.terminate();
+      calculationWorker = null;
+      reject(new Error("计算时间过长，请检查板件数量或拆分项目"));
+    }, 90000);
+
+    calculationWorker.addEventListener("message", (event) => {
+      if (event.data?.requestId !== requestId) return;
+      clearTimeout(timeout);
+      calculationWorker?.terminate();
+      calculationWorker = null;
+      if (event.data.error) reject(new Error(event.data.error));
+      else resolve(event.data.result);
+    });
+    calculationWorker.addEventListener("error", () => {
+      clearTimeout(timeout);
+      calculationWorker?.terminate();
+      calculationWorker = null;
+      reject(new Error("后台计算模块加载失败"));
+    });
+    calculationWorker.postMessage({ requestId, parts, settings });
+  });
+}
+
+async function calculate() {
   if (!state.parts.length) {
     showToast("请先添加至少一个板件");
     return;
   }
 
-  elements.calculateButton.disabled = true;
-  elements.calculateButton.querySelector("span").textContent = "正在本地排版…";
+  const analysis = analyzeParts();
+  if (analysis.invalidIds.size) {
+    showToast(`有 ${analysis.invalidIds.size} 行数据无效，请先修正`);
+    document.getElementById("parts-title").scrollIntoView({ behavior: "smooth", block: "start" });
+    return;
+  }
+  if (analysis.pieceCount > 20000) {
+    showToast("单次最多计算 20000 片，请拆分项目后再计算");
+    return;
+  }
 
-  requestAnimationFrame(() => {
-    setTimeout(() => {
-      const result = optimizeCutting(state.parts, state.settings);
-      renderResults(result);
-      elements.calculateButton.disabled = false;
-      elements.calculateButton.querySelector("span").textContent = "重新排版计算";
-      document.getElementById("results").scrollIntoView({ behavior: "smooth", block: "start" });
-      showToast(`计算完成：${result.totals.sheetCount} 张板，封边 ${result.totals.edgeBandOrderMeters} 米`);
-    }, 80);
-  });
+  elements.calculateButton.disabled = true;
+  elements.calculateButton.querySelector("span").textContent = "正在比较排版方案…";
+
+  try {
+    const result = await runOptimizationInWorker(state.parts, state.settings);
+    renderResults(result);
+    elements.calculateButton.querySelector("span").textContent = "重新排版计算";
+    document.getElementById("results").scrollIntoView({ behavior: "smooth", block: "start" });
+    showToast(`计算完成：${result.totals.sheetCount} 张板，封边 ${result.totals.edgeBandOrderMeters} 米`);
+  } catch (error) {
+    elements.calculateButton.querySelector("span").textContent = "重新开始排版";
+    showToast(error.message || "计算失败，请检查数据后重试");
+  } finally {
+    elements.calculateButton.disabled = false;
+  }
 }
 
 function downloadFile(filename, content, type) {
@@ -804,7 +1051,21 @@ function exportCsv() {
       formatPercent(item.utilization),
     ]),
     [],
-    ["颜色/材质", "板号", "序号", "板件", "长度(mm)", "宽度(mm)", "旋转", "木纹锁定", "X(mm)", "Y(mm)"],
+    ["生产板件清单"],
+    ["板件", "颜色/材质", "长度(mm)", "宽度(mm)", "数量", "木纹", "封边方式", "净封边(m)"],
+    ...lastResult.parts.map((part) => [
+      part.name,
+      part.material,
+      part.length,
+      part.width,
+      part.quantity,
+      part.grainLocked ? "锁定" : "自由",
+      edgeLabelFromPart(part),
+      ((part.quantity * (part.length * part.edgeLong + part.width * part.edgeShort)) / 1000).toFixed(2),
+    ]),
+    [],
+    ["排版定位清单"],
+    ["颜色/材质", "板号", "序号", "板件", "长度(mm)", "宽度(mm)", "封边方式", "旋转", "木纹锁定", "X(mm)", "Y(mm)"],
   ];
   lastResult.sheets.forEach((sheet) => {
     sheet.placements.forEach((placement, index) => {
@@ -815,6 +1076,7 @@ function exportCsv() {
         placement.name,
         placement.length,
         placement.width,
+        edgeLabelFromPart(placement),
         placement.rotated ? "是" : "否",
         placement.grainLocked ? "是" : "否",
         placement.x,
@@ -840,6 +1102,7 @@ async function importProject(file) {
       parts: stored.parts.map((part) => newPart(part)),
       updatedAt: new Date().toISOString(),
     };
+    selectedPartIds.clear();
     renderAll();
     saveState({ immediate: true });
     showToast("项目已导入并保存在本机");
@@ -867,6 +1130,7 @@ document.getElementById("add-part-button").addEventListener("click", () => {
 
 document.getElementById("sample-button").addEventListener("click", () => {
   state.parts = createSampleParts().map((part) => ({ ...part, id: makeId() }));
+  selectedPartIds.clear();
   state.settings = { ...DEFAULT_SETTINGS };
   renderSettings();
   renderParts();
@@ -899,11 +1163,20 @@ elements.ocrFile.addEventListener("change", () => {
 
 elements.partsBody.addEventListener("input", (event) => updateStateFromPartInput(event.target));
 elements.partsBody.addEventListener("change", (event) => updateStateFromPartInput(event.target));
+elements.partsBody.addEventListener("change", (event) => {
+  if (!event.target.classList.contains("row-select")) return;
+  const row = event.target.closest("tr[data-id]");
+  if (!row) return;
+  if (event.target.checked) selectedPartIds.add(row.dataset.id);
+  else selectedPartIds.delete(row.dataset.id);
+  renderBatchToolbar();
+});
 elements.partsBody.addEventListener("click", (event) => {
   const button = event.target.closest('[data-action="delete"]');
   if (!button) return;
   const row = button.closest("tr[data-id]");
   state.parts = state.parts.filter((part) => part.id !== row.dataset.id);
+  selectedPartIds.delete(row.dataset.id);
   renderParts();
   resetResults();
   saveState();
@@ -928,6 +1201,19 @@ elements.projectName.addEventListener("input", () => {
 
 elements.calculateButton.addEventListener("click", calculate);
 elements.applyEdgeButton.addEventListener("click", applyBatchEdgePreset);
+elements.applyGrainButton.addEventListener("click", applyBatchGrain);
+elements.applyMaterialButton.addEventListener("click", applyBatchMaterial);
+elements.deleteSelectedButton.addEventListener("click", deleteSelectedParts);
+elements.mergeDuplicatesButton.addEventListener("click", mergeDuplicateParts);
+elements.selectAllParts.addEventListener("change", () => {
+  selectedPartIds = elements.selectAllParts.checked
+    ? new Set(state.parts.map((part) => part.id))
+    : new Set();
+  renderParts();
+});
+elements.resultMaterialFilter.addEventListener("change", () => {
+  if (lastResult) renderSheetCards(lastResult, elements.resultMaterialFilter.value);
+});
 document.getElementById("export-button").addEventListener("click", exportProject);
 document.getElementById("import-button").addEventListener("click", () => elements.importFile.click());
 elements.importFile.addEventListener("change", () => {
