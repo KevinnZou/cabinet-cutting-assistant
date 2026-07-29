@@ -690,6 +690,9 @@ function renderResults(result) {
     const names = result.oversized.map((part) => `${escapeHtml(part.name)}（${part.length} × ${part.width}）`).join("、");
     alerts.push(`<div class="alert error">有 ${result.oversized.length} 片无法放入标准板，请检查尺寸、修边或木纹方向：${names}</div>`);
   }
+  if (!result.totals.integrityOk || result.totals.unplacedPartCount > 0) {
+    alerts.push(`<div class="alert error">排版数量校验未通过：录入 ${result.totals.partCount} 片，已排 ${result.totals.placedPartCount} 片，超尺寸 ${result.oversized.length} 片。请调整规则后重新计算。</div>`);
+  }
   elements.resultAlerts.innerHTML = alerts.join("");
 
   if (!result.sheets.length) {
