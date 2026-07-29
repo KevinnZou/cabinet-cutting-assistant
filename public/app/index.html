@@ -9,7 +9,7 @@
     />
     <meta name="theme-color" content="#14271e" />
     <title>开料工作台｜柜体板开料计算助手</title>
-    <link rel="stylesheet" href="./app.css?v=20260729-4" />
+    <link rel="stylesheet" href="./app.css?v=20260729-5" />
   </head>
   <body>
     <header class="topbar">
@@ -91,6 +91,7 @@
               <span>460×2440=14</span>
               <span>以下都四边 / 以下都单边</span>
               <span>单边 / 四边 / 两长一短</span>
+              <span>余料双边 / 余料不封 / 短边至少80</span>
             </div>
           </div>
           <div class="parser-side">
@@ -218,6 +219,17 @@
             </table>
           </div>
 
+          <section class="leftover-settings" aria-labelledby="leftover-settings-title">
+            <div class="leftover-settings-head">
+              <div>
+                <strong id="leftover-settings-title">余料处理</strong>
+                <span>按颜色设置可回收余料的封边方式与最小保留尺寸；余料封边会计入最终领料。</span>
+              </div>
+              <b>生产规则</b>
+            </div>
+            <div class="leftover-rules-list" id="leftover-rules-list"></div>
+          </section>
+
           <div class="calculate-bar">
             <div>
               <strong id="calculation-ready">准备计算</strong>
@@ -273,6 +285,6 @@
     </footer>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="./app.js?v=20260729-4"></script>
+    <script type="module" src="./app.js?v=20260729-5"></script>
   </body>
 </html>
