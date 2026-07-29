@@ -176,3 +176,67 @@ test("真实粘贴清单从解析到排版保持数量和颜色汇总一致", ()
     ],
   );
 });
+
+test("多策略排版返回生产完整性审计结果", () => {
+  const result = optimizeCutting([
+    { id: "a", name: "A", material: "白色", length: 920, width: 510, quantity: 7 },
+    { id: "b", name: "B", material: "白色", length: 760, width: 330, quantity: 9 },
+    { id: "c", name: "C", material: "白色", length: 450, width: 210, quantity: 13 },
+  ]);
+
+  assert.equal(result.totals.strategyCount, 4);
+  assert.equal(result.totals.integrityOk, true);
+  assert.deepEqual(result.totals.auditIssues, []);
+  assert.equal(result.totals.placedPartCount, 29);
+});
+
+test("随机规格回归：数量、边界和重叠保持一致", () => {
+  let seed = 20260729;
+  const random = () => {
+    seed = (seed * 1664525 + 1013904223) % 4294967296;
+    return seed / 4294967296;
+  };
+
+  for (let caseIndex = 0; caseIndex < 40; caseIndex += 1) {
+    const parts = Array.from({ length: 4 + Math.floor(random() * 6) }, (_, index) => ({
+      id: `${caseIndex}-${index}`,
+      name: `板件${index + 1}`,
+      material: index % 3 === 0 ? "暖白" : "胡桃",
+      length: 180 + Math.floor(random() * 1900),
+      width: 80 + Math.floor(random() * 900),
+      quantity: 1 + Math.floor(random() * 5),
+      grainLocked: random() > 0.55,
+      edgeLong: Math.floor(random() * 3),
+      edgeShort: Math.floor(random() * 3),
+    }));
+    const result = optimizeCutting(parts, { kerf: 3, trim: 5 });
+
+    assert.equal(result.totals.integrityOk, true, `case ${caseIndex}`);
+    assert.equal(
+      result.totals.placedPartCount + result.oversized.length,
+      result.totals.partCount,
+      `case ${caseIndex}`,
+    );
+    assert.deepEqual(result.totals.auditIssues, [], `case ${caseIndex}`);
+  }
+});
+
+test("千片级清单不会少算", () => {
+  const result = optimizeCutting([
+    {
+      id: "bulk",
+      name: "批量层板",
+      material: "暖白",
+      length: 600,
+      width: 400,
+      quantity: 1200,
+      grainLocked: false,
+      edgeLong: 1,
+      edgeShort: 0,
+    },
+  ]);
+
+  assert.equal(result.totals.partCount, 1200);
+  assert.equal(result.totals.placedPartCount, 1200);
+  assert.equal(result.totals.integrityOk, true);
+});
