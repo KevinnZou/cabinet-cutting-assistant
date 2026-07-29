@@ -50,15 +50,29 @@ function normalizeDimensionUnit(value, unit) {
 function normalizeCompactDimensions(lengthValue, lengthUnit, widthValue, widthUnit) {
   const rawLength = toNumber(lengthValue);
   const rawWidth = toNumber(widthValue);
+  let length;
+  let width;
+
   if (!lengthUnit && !widthUnit && rawLength > 0 && rawLength <= 300 && rawWidth > 0 && rawWidth <= 130) {
+    length = Math.round(rawLength * 10);
+    width = Math.round(rawWidth * 10);
+  } else {
+    length = normalizeDimensionUnit(lengthValue, lengthUnit);
+    width = normalizeDimensionUnit(widthValue, widthUnit);
+  }
+
+  if (width > length) {
     return {
-      length: Math.round(rawLength * 10),
-      width: Math.round(rawWidth * 10),
+      length: width,
+      width: length,
+      normalizedDirection: true,
     };
   }
+
   return {
-    length: normalizeDimensionUnit(lengthValue, lengthUnit),
-    width: normalizeDimensionUnit(widthValue, widthUnit),
+    length,
+    width,
+    normalizedDirection: false,
   };
 }
 
@@ -122,6 +136,14 @@ function parseSize(line) {
 function parseMaterial(line, currentMaterial = "") {
   const prefixedSize = line.match(/^([^:=]{2,30})\s*:\s*\d/);
   if (prefixedSize) return prefixedSize[1].trim();
+
+  const leadingMaterial = line.match(/^([^\d:=]{2,20})\s+(?=\d)/);
+  if (
+    leadingMaterial &&
+    /(?:白|灰|黑|胡桃|橡木|科技木|柚木|榆|杉|木纹|纯色|免漆|饰面|花色|板材)$/i.test(leadingMaterial[1].trim())
+  ) {
+    return leadingMaterial[1].trim();
+  }
 
   for (const key of MATERIAL_KEYS) {
     const match = line.match(new RegExp(`${key}\\s*[:=]?\\s*([^\\s,，;；|/]+)`, "i"));
@@ -226,6 +248,17 @@ function parseName(line, sizeRaw) {
 function splitLines(text) {
   return String(text || "")
     .split(/\r?\n/)
+    .flatMap((line) => {
+      const segmentPattern = /\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|m|米)?\s*[x*]\s*\d+(?:\.\d+)?|\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米)?\s*=\s*\d+/i;
+      if (!segmentPattern.test(line)) return [line];
+      const segments = line
+        .split(/\s*[;,，；、]\s*/)
+        .map((segment) => cleanText(segment))
+        .filter(Boolean);
+      return segments.length > 1 && segments.every((segment) => segmentPattern.test(segment) || hasEdgeInstruction(segment))
+        ? segments
+        : [line];
+    })
     .map((line) => cleanText(line))
     .filter(Boolean)
     .filter((line) => !/^(?:项目|工程|客户|地址|电话|备注|说明)\s*:/i.test(line))
@@ -275,6 +308,10 @@ export function parsePartsText(text, options = {}) {
     }
 
     const material = nextMaterial;
+    if (material && material !== currentMaterial) {
+      currentEdges = parseOptions.defaultEdges;
+      segmentStart = parts.length;
+    }
     currentMaterial = material || currentMaterial;
     const parsedEdges = parseEdges(line);
     const edges = parsedEdges.explicit ? parsedEdges : currentEdges || parsedEdges;
@@ -285,6 +322,8 @@ export function parsePartsText(text, options = {}) {
         size.kind === "strip" && (parsedName === "未命名板件" || parsedName === material || !/[\u4e00-\u9fa5A-Za-z]/.test(parsedName))
           ? `条子 ${size.width}`
           : parsedName === "未命名板件"
+            ? fallbackName
+            : parsedName === material
             ? fallbackName
             : parsedName,
       material,
