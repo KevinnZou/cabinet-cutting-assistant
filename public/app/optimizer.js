@@ -6,6 +6,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   edgeLoss: 3,
   allowRotation: true,
   roundEdgeBand: true,
+  materialRules: {},
 });
 
 const MIN_BOARD_SIZE = 100;
@@ -18,6 +19,31 @@ function toNumber(value, fallback) {
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
+}
+
+const EDGE_MODE_PATTERN = /^(?:[012])\/(?:[012])$/;
+
+export function normalizeMaterialRules(input = {}) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return {};
+
+  return Object.fromEntries(
+    Object.entries(input).map(([material, rawRule]) => {
+      const rule = rawRule && typeof rawRule === "object" ? rawRule : {};
+      return [
+        String(material),
+        {
+          leftoverEdgeMode: EDGE_MODE_PATTERN.test(String(rule.leftoverEdgeMode || ""))
+            ? String(rule.leftoverEdgeMode)
+            : "0/0",
+          minLeftoverWidth: clamp(
+            Math.round(toNumber(rule.minLeftoverWidth, 50)),
+            0,
+            1000,
+          ),
+        },
+      ];
+    }),
+  );
 }
 
 export function normalizeSettings(input = {}) {
@@ -54,6 +80,7 @@ export function normalizeSettings(input = {}) {
       input.roundEdgeBand === undefined
         ? DEFAULT_SETTINGS.roundEdgeBand
         : Boolean(input.roundEdgeBand),
+    materialRules: normalizeMaterialRules(input.materialRules),
   };
 }
 
@@ -258,12 +285,112 @@ function commitPlacement(sheet, part, position) {
     y: position.y,
     placedWidth: position.actualWidth,
     placedHeight: position.actualHeight,
+    cutWidth: position.width,
+    cutHeight: position.height,
     rotated: position.rotated,
     grainLocked: part.grainLocked,
     edgeLong: part.edgeLong,
     edgeShort: part.edgeShort,
   });
   sheet.freeRectangles = splitFreeRectangles(sheet.freeRectangles, used);
+}
+
+function subtractRectangle(rectangle, occupied) {
+  if (!rectanglesIntersect(rectangle, occupied)) return [rectangle];
+
+  const left = rectangle.x;
+  const top = rectangle.y;
+  const right = rectangle.x + rectangle.width;
+  const bottom = rectangle.y + rectangle.height;
+  const occupiedLeft = Math.max(left, occupied.x);
+  const occupiedTop = Math.max(top, occupied.y);
+  const occupiedRight = Math.min(right, occupied.x + occupied.width);
+  const occupiedBottom = Math.min(bottom, occupied.y + occupied.height);
+  const pieces = [];
+
+  if (occupiedTop > top) {
+    pieces.push({ x: left, y: top, width: rectangle.width, height: occupiedTop - top });
+  }
+  if (occupiedBottom < bottom) {
+    pieces.push({
+      x: left,
+      y: occupiedBottom,
+      width: rectangle.width,
+      height: bottom - occupiedBottom,
+    });
+  }
+  if (occupiedLeft > left && occupiedBottom > occupiedTop) {
+    pieces.push({
+      x: left,
+      y: occupiedTop,
+      width: occupiedLeft - left,
+      height: occupiedBottom - occupiedTop,
+    });
+  }
+  if (occupiedRight < right && occupiedBottom > occupiedTop) {
+    pieces.push({
+      x: occupiedRight,
+      y: occupiedTop,
+      width: right - occupiedRight,
+      height: occupiedBottom - occupiedTop,
+    });
+  }
+
+  return pieces.filter((piece) => piece.width > 0 && piece.height > 0);
+}
+
+function deriveLeftovers(sheet, settings, rule) {
+  const usableRectangle = {
+    x: settings.trim,
+    y: settings.trim,
+    width: settings.boardWidth - settings.trim * 2,
+    height: settings.boardHeight - settings.trim * 2,
+  };
+  let emptyRectangles = [usableRectangle];
+
+  for (const placement of sheet.placements) {
+    const occupied = {
+      x: placement.x,
+      y: placement.y,
+      width: Math.min(
+        placement.cutWidth,
+        usableRectangle.x + usableRectangle.width - placement.x,
+      ),
+      height: Math.min(
+        placement.cutHeight,
+        usableRectangle.y + usableRectangle.height - placement.y,
+      ),
+    };
+    emptyRectangles = emptyRectangles.flatMap((rectangle) =>
+      subtractRectangle(rectangle, occupied),
+    );
+  }
+
+  const [edgeLong, edgeShort] = rule.leftoverEdgeMode.split("/").map(Number);
+  return emptyRectangles
+    .filter(
+      (rectangle) =>
+        Math.min(rectangle.width, rectangle.height) >= rule.minLeftoverWidth,
+    )
+    .map((rectangle, index) => {
+      const length = Math.max(rectangle.width, rectangle.height);
+      const width = Math.min(rectangle.width, rectangle.height);
+      return {
+        id: `${sheet.id}-leftover-${index + 1}`,
+        x: rectangle.x,
+        y: rectangle.y,
+        placedWidth: rectangle.width,
+        placedHeight: rectangle.height,
+        length,
+        width,
+        edgeLong,
+        edgeShort,
+        edgeMode: rule.leftoverEdgeMode,
+        area: rectangle.width * rectangle.height,
+        edgeBandRawMm: length * edgeLong + width * edgeShort,
+      };
+    })
+    .sort((a, b) => b.area - a.area);
 }
 
 function expandParts(parts) {
@@ -386,6 +513,53 @@ function validatePackedSheets(sheets, settings) {
         }
       }
     }
+
+    for (let index = 0; index < (sheet.leftovers || []).length; index += 1) {
+      const leftover = sheet.leftovers[index];
+      const leftoverRectangle = {
+        x: leftover.x,
+        y: leftover.y,
+        width: leftover.placedWidth,
+        height: leftover.placedHeight,
+      };
+      if (
+        leftover.x < minX ||
+        leftover.y < minY ||
+        leftover.x + leftover.placedWidth > maxX ||
+        leftover.y + leftover.placedHeight > maxY
+      ) {
+        issues.push(`${sheet.material} 第 ${sheet.number} 张存在越界余料`);
+      }
+      if (
+        sheet.placements.some((placement) =>
+          rectanglesIntersect(leftoverRectangle, {
+            x: placement.x,
+            y: placement.y,
+            width: placement.placedWidth,
+            height: placement.placedHeight,
+          }),
+        )
+      ) {
+        issues.push(`${sheet.material} 第 ${sheet.number} 张余料与板件重叠`);
+      }
+      for (
+        let otherIndex = index + 1;
+        otherIndex < sheet.leftovers.length;
+        otherIndex += 1
+      ) {
+        const other = sheet.leftovers[otherIndex];
+        if (
+          rectanglesIntersect(leftoverRectangle, {
+            x: other.x,
+            y: other.y,
+            width: other.placedWidth,
+            height: other.placedHeight,
+          })
+        ) {
+          issues.push(`${sheet.material} 第 ${sheet.number} 张余料块重叠`);
+        }
+      }
+    }
   }
 
   return issues;
@@ -433,29 +607,51 @@ export function optimizeCutting(rawParts, rawSettings = {}) {
     );
     usedArea += sheet.usedArea;
     sheet.utilization = boardArea ? (sheet.usedArea / boardArea) * 100 : 0;
+    const leftoverRule = settings.materialRules[sheet.material] || {
+      leftoverEdgeMode: "0/0",
+      minLeftoverWidth: 50,
+    };
+    sheet.leftoverRule = leftoverRule;
+    sheet.leftovers = deriveLeftovers(sheet, settings, leftoverRule);
+    sheet.leftoverArea = sheet.leftovers.reduce((sum, item) => sum + item.area, 0);
+    sheet.leftoverEdgeBandRawMm = sheet.leftovers.reduce(
+      (sum, item) => sum + item.edgeBandRawMm,
+      0,
+    );
     delete sheet.freeRectangles;
   }
 
-  const edgeBandRawMm = validParts.reduce(
+  const partEdgeBandRawMm = validParts.reduce(
     (sum, part) =>
       sum +
       part.quantity *
         (part.length * part.edgeLong + part.width * part.edgeShort),
     0,
   );
+  const leftoverEdgeBandRawMm = sheets.reduce(
+    (sum, sheet) => sum + sheet.leftoverEdgeBandRawMm,
+    0,
+  );
+  const edgeBandRawMm = partEdgeBandRawMm + leftoverEdgeBandRawMm;
   const edgeBandWithLossMm = edgeBandRawMm * (1 + settings.edgeLoss / 100);
   const edgeBandMeters = edgeBandWithLossMm / 1000;
   const materialSummaries = [...new Set(validParts.map((part) => part.material))].map((material) => {
     const materialParts = validParts.filter((part) => part.material === material);
     const materialSheets = sheetsByMaterial.get(material) || [];
     const materialUsedArea = materialSheets.reduce((sum, sheet) => sum + sheet.usedArea, 0);
-    const materialEdgeBandRawMm = materialParts.reduce(
+    const materialPartEdgeBandRawMm = materialParts.reduce(
       (sum, part) =>
         sum +
         part.quantity *
           (part.length * part.edgeLong + part.width * part.edgeShort),
       0,
     );
+    const materialLeftoverEdgeBandRawMm = materialSheets.reduce(
+      (sum, sheet) => sum + sheet.leftoverEdgeBandRawMm,
+      0,
+    );
+    const materialEdgeBandRawMm =
+      materialPartEdgeBandRawMm + materialLeftoverEdgeBandRawMm;
     const materialEdgeBandWithLossMm = materialEdgeBandRawMm * (1 + settings.edgeLoss / 100);
     const materialEdgeBandMeters = materialEdgeBandWithLossMm / 1000;
     const materialEdgeBandOrderMeters = settings.roundEdgeBand
@@ -471,9 +667,23 @@ export function optimizeCutting(rawParts, rawSettings = {}) {
       usedArea: materialUsedArea,
       totalBoardArea: materialTotalBoardArea,
       utilization: materialTotalBoardArea ? (materialUsedArea / materialTotalBoardArea) * 100 : 0,
+      partEdgeBandRawMm: materialPartEdgeBandRawMm,
+      leftoverEdgeBandRawMm: materialLeftoverEdgeBandRawMm,
       edgeBandRawMm: materialEdgeBandRawMm,
       edgeBandWithLossMm: materialEdgeBandWithLossMm,
       edgeBandOrderMeters: materialEdgeBandOrderMeters,
+      leftoverCount: materialSheets.reduce(
+        (sum, sheet) => sum + sheet.leftovers.length,
+        0,
+      ),
+      leftoverArea: materialSheets.reduce(
+        (sum, sheet) => sum + sheet.leftoverArea,
+        0,
+      ),
+      leftoverRule: settings.materialRules[material] || {
+        leftoverEdgeMode: "0/0",
+        minLeftoverWidth: 50,
+      },
     };
   });
   const edgeBandOrderMeters = materialSummaries.length
@@ -506,12 +716,22 @@ export function optimizeCutting(rawParts, rawSettings = {}) {
       totalBoardArea,
       wasteArea: Math.max(0, totalBoardArea - usedArea),
       utilization: totalBoardArea ? (usedArea / totalBoardArea) * 100 : 0,
+      partEdgeBandRawMm,
+      leftoverEdgeBandRawMm,
       edgeBandRawMm,
       edgeBandWithLossMm,
       edgeBandOrderMeters,
       integrityOk: auditIssues.length === 0,
       auditIssues,
       strategyCount: SORT_STRATEGIES.length,
+      leftoverCount: sheets.reduce((sum, sheet) => sum + sheet.leftovers.length, 0),
+      leftoverArea: sheets.reduce((sum, sheet) => sum + sheet.leftoverArea, 0),
+      discardArea: Math.max(
+        0,
+        totalBoardArea -
+          usedArea -
+          sheets.reduce((sum, sheet) => sum + sheet.leftoverArea, 0),
+      ),
     },
   };
 }
