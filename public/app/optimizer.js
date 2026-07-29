@@ -388,6 +388,8 @@ export function optimizeCutting(rawParts, rawSettings = {}) {
       ? Math.ceil(edgeBandMeters)
       : Math.round(edgeBandMeters * 100) / 100;
   const totalBoardArea = sheets.length * boardArea;
+  const placedPartCount = sheets.reduce((sum, sheet) => sum + sheet.placements.length, 0);
+  const expectedPlacedPartCount = instances.length - oversized.length;
 
   return {
     settings,
@@ -398,7 +400,8 @@ export function optimizeCutting(rawParts, rawSettings = {}) {
     materialSummaries,
     totals: {
       partCount: instances.length,
-      placedPartCount: instances.length - oversized.length,
+      placedPartCount,
+      unplacedPartCount: Math.max(0, instances.length - placedPartCount - oversized.length),
       sheetCount: sheets.length,
       materialCount: sheetsByMaterial.size,
       usedArea,
@@ -408,6 +411,7 @@ export function optimizeCutting(rawParts, rawSettings = {}) {
       edgeBandRawMm,
       edgeBandWithLossMm,
       edgeBandOrderMeters,
+      integrityOk: placedPartCount === expectedPlacedPartCount,
     },
   };
 }
