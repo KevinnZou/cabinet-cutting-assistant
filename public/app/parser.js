@@ -4,6 +4,12 @@ const DEFAULT_PARSE_OPTIONS = Object.freeze({
   defaultStripLength: 2440,
   defaultEdges: { edgeLong: 1, edgeShort: 0 },
 });
+const DIMENSION_UNIT_PATTERN = "(?:mm|毫米|cm|厘米|m|米)?";
+const NUMBER_PATTERN = "\\d+(?:\\.\\d+)?";
+const SIZE_TOKEN_PATTERN = new RegExp(
+  `${NUMBER_PATTERN}\\s*${DIMENSION_UNIT_PATTERN}\\s*[x*]\\s*${NUMBER_PATTERN}\\s*${DIMENSION_UNIT_PATTERN}(?:\\s*(?:=|[x*])\\s*\\d+\\s*(?:片|块|件|个|pcs?|张)?)?`,
+  "i",
+);
 const NAME_STOP_WORDS = new Set([
   "长",
   "宽",
@@ -80,11 +86,17 @@ function parseCount(line) {
   const sizeEqualsCount = line.match(/\b\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|m|米)?\s*x\s*\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|m|米)?\s*=\s*(\d+)\s*(?:片|块|件|个|pcs?|张)?/i);
   if (sizeEqualsCount) return Math.max(1, Math.floor(toNumber(sizeEqualsCount[1], 1)));
 
+  const sizeParenCount = line.match(/\b\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|m|米)?\s*[x*]\s*\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|m|米)?\s*\(?\s*(\d+)\s*(?:片|块|件|个|pcs?|张)\s*\)?/i);
+  if (sizeParenCount) return Math.max(1, Math.floor(toNumber(sizeParenCount[1], 1)));
+
   const equalCount = line.match(/(?:^|[:=\s])\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米)?\s*=\s*(\d+)\s*(?:片|块|件|个|pcs?|张)?/i);
   if (equalCount) return Math.max(1, Math.floor(toNumber(equalCount[1], 1)));
 
   const afterSize = line.match(/\b\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|m|米)?\s*x\s*\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|m|米)?\s*(?:x|×|\*)\s*(\d+)\s*(?:片|块|件|个|pcs?|张)?/i);
   if (afterSize) return Math.max(1, Math.floor(toNumber(afterSize[1], 1)));
+
+  const tableTriplet = line.match(/(?:^|[^\d.])\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|m|米)?\s+\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|m|米)?\s+(\d+)\s*(?:片|块|件|个|pcs?|张)?(?:$|[^\d.])/i);
+  if (tableTriplet) return Math.max(1, Math.floor(toNumber(tableTriplet[1], 1)));
 
   const explicit = line.match(/(?:数量|数|qty|q|共)\s*[:=]?\s*(\d+)\s*(?:片|块|件|个|pcs?|张)?/i);
   if (explicit) return Math.max(1, Math.floor(toNumber(explicit[1], 1)));
@@ -95,19 +107,26 @@ function parseCount(line) {
 
 function parseSize(line) {
   const labelled = [
-    /(?:长|长度|l)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*(mm|毫米|cm|厘米|m|米)?\D{0,8}(?:宽|宽度|w|深|深度|d)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*(mm|毫米|cm|厘米|m|米)?/i,
-    /(?:宽|宽度|w|深|深度|d)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*(mm|毫米|cm|厘米|m|米)?\D{0,8}(?:长|长度|l)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*(mm|毫米|cm|厘米|m|米)?/i,
+    {
+      pattern: /(?:长|长度|l)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*(mm|毫米|cm|厘米|m|米)?\D{0,12}(?:宽|宽度|w|深|深度|d)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*(mm|毫米|cm|厘米|m|米)?/i,
+      order: "length-width",
+    },
+    {
+      pattern: /(?:宽|宽度|w|深|深度|d)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*(mm|毫米|cm|厘米|m|米)?\D{0,12}(?:长|长度|l)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*(mm|毫米|cm|厘米|m|米)?/i,
+      order: "width-length",
+    },
   ];
 
-  for (const pattern of labelled) {
+  for (const { pattern, order } of labelled) {
     const match = line.match(pattern);
     if (!match) continue;
     const first = normalizeDimensionUnit(match[1], match[2]);
     const second = normalizeDimensionUnit(match[3], match[4]);
-    if (/^(宽|宽度|w|深|深度|d)/i.test(match[0])) {
-      return { length: second, width: first, raw: match[0] };
-    }
-    return { length: first, width: second, raw: match[0] };
+    const length = order === "width-length" ? second : first;
+    const width = order === "width-length" ? first : second;
+    return width > length
+      ? { length: width, width: length, raw: match[0], normalizedDirection: true }
+      : { length, width, raw: match[0], normalizedDirection: false };
   }
 
   const compact = line.match(/(?:^|[^\d.])(\d+(?:\.\d+)?)\s*(mm|毫米|cm|厘米|m|米)?\s*[x*]\s*(\d+(?:\.\d+)?)\s*(mm|毫米|cm|厘米|m|米)?(?=$|[^\d.]|[x*]\d)/i);
@@ -116,6 +135,16 @@ function parseSize(line) {
     return {
       ...size,
       raw: compact[0].replace(/^[^\d.]/, ""),
+      kind: "rectangle",
+    };
+  }
+
+  const tableTriplet = line.match(/(?:^|[^\d.])(\d+(?:\.\d+)?)\s*(mm|毫米|cm|厘米|m|米)?\s+(\d+(?:\.\d+)?)\s*(mm|毫米|cm|厘米|m|米)?\s+\d+\s*(?:片|块|件|个|pcs?|张)?(?:$|[^\d.])/i);
+  if (tableTriplet) {
+    const size = normalizeCompactDimensions(tableTriplet[1], tableTriplet[2], tableTriplet[3], tableTriplet[4]);
+    return {
+      ...size,
+      raw: tableTriplet[0].replace(/^[^\d.]/, ""),
       kind: "rectangle",
     };
   }
@@ -150,14 +179,14 @@ function parseMaterial(line, currentMaterial = "") {
     if (match) return match[1].replace(/[。.]$/, "");
   }
 
-  const heading = line.match(/^(?:#\s*)?(?:颜色|色号|材质|板材|饰面|花色)\s*[:=]\s*(.+)$/i);
+  const heading = line.match(/^(?:#\s*)?(?:颜色|色号|材质|板材|饰面|花色)\s*[:=\s]\s*(.+)$/i);
   if (heading) return heading[1].trim();
 
   return currentMaterial || "未分类";
 }
 
 function isMaterialHeading(line) {
-  return /^(?:#\s*)?(?:颜色|色号|材质|板材|饰面|花色)\s*[:=]\s*\D+$/i.test(line);
+  return /^(?:#\s*)?(?:颜色|色号|材质|板材|饰面|花色)\s*[:=\s]\s*\D+$/i.test(line);
 }
 
 function parseEdges(line) {
@@ -165,14 +194,14 @@ function parseEdges(line) {
   let edgeLong = 0;
   let edgeShort = 0;
 
-  if (/(?:4边|四边|四周|全封|全封边|封4边|封四边|四周封|门板封边|门.*四周封|都封4边|都封四边)/.test(line)) {
+  if (/(?:4边|四边|四周|全封|全封边|封4边|封四边|四周封|周边封|门板封边|门.*四周封|都封4边|都封四边|封边\s*[:=]?\s*(?:4|四|四周|四边))/.test(line)) {
     edgeLong = 2;
     edgeShort = 2;
-  } else if (/(?:长条\s*(?:双边封|封双边|双边)|条子\s*(?:双边封|封双边|双边)|线条\s*(?:双边封|封双边|双边)|全双边|双边封|封双边|两边封)/.test(line)) {
+  } else if (/(?:长条\s*(?:双边封|封双边|双边)|条子\s*(?:双边封|封双边|双边)|线条\s*(?:双边封|封双边|双边)|地脚线.*双边|全双边|双边封|封双边|两边封|封边\s*[:=]?\s*双边)/.test(line)) {
     edgeLong = 2;
-  } else if (/(?:全单边|单边封|封单边|封一边|一边封|余料.*单边|(?:^|\s|\(|（)单边(?:$|\s|\)|）)|都单边)/.test(line)) {
+  } else if (/(?:全单边|单边封|封单边|封一边|一边封|余料.*单边|(?:^|\s|\(|（)单边(?:$|\s|\)|）)|都单边|封边\s*[:=]?\s*单边)/.test(line)) {
     edgeLong = 1;
-  } else if (/(?:不封边|不用封边|免封边|封边\s*[:=]?\s*0\s*[/,， ]\s*0)/.test(line)) {
+  } else if (/(?:不封边|不用封边|无需封边|免封边|不封|封边\s*[:=]?\s*(?:无|没有|0\s*[/,， ]\s*0))/.test(line)) {
     edgeLong = 0;
     edgeShort = 0;
   } else if (/(?:双长边|长边\s*2|长\s*2|两条长边)/.test(line)) {
@@ -213,7 +242,7 @@ function parseEdges(line) {
 }
 
 function hasEdgeInstruction(line) {
-  return /(?:封边|封单边|单边封|全单边|单边|双边封|封双边|全双边|两边封|长条\s*双边|条子\s*双边|线条\s*双边|4边|四边|四周|全封|长边|短边|一长一短|两长一短|两短一长|余料.*单边|门.*四周|不封边|免封边)/.test(line);
+  return /(?:封边|封单边|单边封|全单边|单边|双边封|封双边|全双边|两边封|长条\s*双边|条子\s*双边|线条\s*双边|地脚线.*双边|4边|四边|四周|周边|全封|长边|短边|一长一短|两长一短|两短一长|余料.*单边|门.*四周|不封边|不用封边|无需封边|免封边|不封)/.test(line);
 }
 
 function parseGrain(line) {
@@ -230,9 +259,12 @@ function parseName(line, sizeRaw) {
     .replace(/(?:x|\*)\s*\d+\s*(?:片|块|件|个|pcs?|张)?/gi, " ")
     .replace(/(?:颜色|色号|材质|板材|饰面|花色)\s*[:=]?\s*\S+/gi, " ")
     .replace(/(?:封边|封长边|长边封|封短边|短边封)\s*[:=]?\s*[012](?:\s*[/,， ]\s*[012])?/gi, " ")
+    .replace(/封边\s*[:=]?\s*(?:四周|四边|4边|四|4|单边|双边|无|没有|不封|0\s*[/,， ]\s*0)/gi, " ")
     .replace(/=\s*\d+\s*(?:片|块|件|个|pcs?|张)?/gi, " ")
     .replace(/(?:长边|短边)\s*[:=]?\s*[012]/gi, " ")
-    .replace(/(?:长条\s*双边封|长条\s*封双边|长条\s*双边|条子\s*双边封|条子\s*封双边|条子\s*双边|线条\s*双边封|线条\s*封双边|线条\s*双边|全双边|双边封|封双边|两边封|全单边|单边封|封单边|封一边|一边封|单边|四边封|四周封|全封边|封4边|封四边|4边|四边|四周|全封|双长边|单长边|双短边|单短边|一长一短|两长一短|两短一长|不封边|免封边|木纹|纹理|顺纹|竖纹|锁纹|方向固定|不可旋转|无纹|不锁|可旋转|自由旋转|横竖可调)/g, " ")
+    .replace(/(?:长条\s*双边封|长条\s*封双边|长条\s*双边|条子\s*双边封|条子\s*封双边|条子\s*双边|线条\s*双边封|线条\s*封双边|线条\s*双边|全双边|双边封|封双边|两边封|全单边|单边封|封单边|封一边|一边封|单边|四边封|四周封|全封边|封4边|封四边|4边|四边|四周|周边封|全封|双长边|单长边|双短边|单短边|一条长边|两条长边|一条短边|两条短边|一长一短|两长一短|两短一长|不封边|不用封边|无需封边|免封边|不封|木纹|纹理|顺纹|竖纹|锁纹|方向固定|不可旋转|无纹|不锁|可旋转|自由旋转|横竖可调)/g, " ")
+    .replace(/(?:封边\s*:?|边\s*:)/g, " ")
+    .replace(/(?:^|\s)(?:双|单|两条|一条)?(?:长边|短边)(?:$|\s)/g, " ")
     .replace(/[()（）]/g, " ")
     .replace(/[|,，;；]/g, " ");
 
@@ -240,7 +272,7 @@ function parseName(line, sizeRaw) {
     .split(/\s+/)
     .map((token) => token.trim())
     .filter(Boolean)
-    .filter((token) => !NAME_STOP_WORDS.has(token) && !/^\d+$/.test(token));
+    .filter((token) => !NAME_STOP_WORDS.has(token) && !/^\d+$/.test(token) && !/^[:：]+$/.test(token));
 
   return tokens.slice(0, 4).join(" ") || "未命名板件";
 }
@@ -249,7 +281,7 @@ function splitLines(text) {
   return String(text || "")
     .split(/\r?\n/)
     .flatMap((line) => {
-      const segmentPattern = /\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|m|米)?\s*[x*]\s*\d+(?:\.\d+)?|\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米)?\s*=\s*\d+/i;
+      const segmentPattern = SIZE_TOKEN_PATTERN;
       if (!segmentPattern.test(line)) return [line];
       const segments = line
         .split(/\s*[;,，；、]\s*/)
@@ -257,12 +289,32 @@ function splitLines(text) {
         .filter(Boolean);
       return segments.length > 1 && segments.every((segment) => segmentPattern.test(segment) || hasEdgeInstruction(segment))
         ? segments
-        : [line];
+        : splitCompactMultiSpecLine(line);
     })
     .map((line) => cleanText(line))
     .filter(Boolean)
     .filter((line) => !/^(?:项目|工程|客户|地址|电话|备注|说明)\s*:/i.test(line))
     .filter((line) => !/^(?:序号|编号|名称|板件|尺寸|长\s*宽|length|name)\b/i.test(line));
+}
+
+function splitCompactMultiSpecLine(line) {
+  const cleaned = cleanText(line);
+  const matches = [...cleaned.matchAll(new RegExp(SIZE_TOKEN_PATTERN.source, "gi"))];
+  if (matches.length <= 1) return [line];
+
+  const firstStart = matches[0].index || 0;
+  const prefix = cleaned.slice(0, firstStart).trim();
+  const prefixLooksLikeMaterial =
+    prefix &&
+    /^[^\d:=]{2,30}$/.test(prefix) &&
+    /(?:白|灰|黑|胡桃|橡木|科技木|柚木|榆|杉|木纹|纯色|免漆|饰面|花色|板材)$/.test(prefix);
+
+  return matches.map((match, index) => {
+    const start = index === 0 ? 0 : match.index || 0;
+    const end = index + 1 < matches.length ? matches[index + 1].index || cleaned.length : cleaned.length;
+    const segment = cleaned.slice(start, end).trim();
+    return index === 0 || !prefixLooksLikeMaterial ? segment : `${prefix} ${segment}`;
+  });
 }
 
 export function parsePartsText(text, options = {}) {
@@ -287,10 +339,13 @@ export function parsePartsText(text, options = {}) {
     if (!size) {
       if (hasEdgeInstruction(line)) {
         currentEdges = parseEdges(line);
-        for (let partIndex = segmentStart; partIndex < parts.length; partIndex += 1) {
-          if (!parts[partIndex].edgeExplicit) {
-            parts[partIndex].edgeLong = currentEdges.edgeLong;
-            parts[partIndex].edgeShort = currentEdges.edgeShort;
+        const futureOnly = /(?:以下|下面|后面|后续|往下|之后)/.test(line) && !/(?:以上|上面|前面|前述|之前)/.test(line);
+        if (!futureOnly) {
+          for (let partIndex = segmentStart; partIndex < parts.length; partIndex += 1) {
+            if (!parts[partIndex].edgeExplicit) {
+              parts[partIndex].edgeLong = currentEdges.edgeLong;
+              parts[partIndex].edgeShort = currentEdges.edgeShort;
+            }
           }
         }
       } else if (
