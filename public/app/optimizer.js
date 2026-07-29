@@ -351,9 +351,42 @@ export function optimizeCutting(rawParts, rawSettings = {}) {
   );
   const edgeBandWithLossMm = edgeBandRawMm * (1 + settings.edgeLoss / 100);
   const edgeBandMeters = edgeBandWithLossMm / 1000;
-  const edgeBandOrderMeters = settings.roundEdgeBand
-    ? Math.ceil(edgeBandMeters)
-    : Math.round(edgeBandMeters * 100) / 100;
+  const materialSummaries = [...new Set(validParts.map((part) => part.material))].map((material) => {
+    const materialParts = validParts.filter((part) => part.material === material);
+    const materialSheets = sheetsByMaterial.get(material) || [];
+    const materialUsedArea = materialSheets.reduce((sum, sheet) => sum + sheet.usedArea, 0);
+    const materialEdgeBandRawMm = materialParts.reduce(
+      (sum, part) =>
+        sum +
+        part.quantity *
+          (part.length * part.edgeLong + part.width * part.edgeShort),
+      0,
+    );
+    const materialEdgeBandWithLossMm = materialEdgeBandRawMm * (1 + settings.edgeLoss / 100);
+    const materialEdgeBandMeters = materialEdgeBandWithLossMm / 1000;
+    const materialEdgeBandOrderMeters = settings.roundEdgeBand
+      ? Math.ceil(materialEdgeBandMeters)
+      : Math.round(materialEdgeBandMeters * 100) / 100;
+    const materialTotalBoardArea = materialSheets.length * boardArea;
+
+    return {
+      material,
+      partTypeCount: materialParts.length,
+      partCount: materialParts.reduce((sum, part) => sum + part.quantity, 0),
+      sheetCount: materialSheets.length,
+      usedArea: materialUsedArea,
+      totalBoardArea: materialTotalBoardArea,
+      utilization: materialTotalBoardArea ? (materialUsedArea / materialTotalBoardArea) * 100 : 0,
+      edgeBandRawMm: materialEdgeBandRawMm,
+      edgeBandWithLossMm: materialEdgeBandWithLossMm,
+      edgeBandOrderMeters: materialEdgeBandOrderMeters,
+    };
+  });
+  const edgeBandOrderMeters = materialSummaries.length
+    ? materialSummaries.reduce((sum, item) => sum + item.edgeBandOrderMeters, 0)
+    : settings.roundEdgeBand
+      ? Math.ceil(edgeBandMeters)
+      : Math.round(edgeBandMeters * 100) / 100;
   const totalBoardArea = sheets.length * boardArea;
 
   return {
@@ -362,6 +395,7 @@ export function optimizeCutting(rawParts, rawSettings = {}) {
     invalidParts,
     oversized,
     sheets,
+    materialSummaries,
     totals: {
       partCount: instances.length,
       placedPartCount: instances.length - oversized.length,
