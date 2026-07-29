@@ -240,3 +240,90 @@ test("千片级清单不会少算", () => {
   assert.equal(result.totals.placedPartCount, 1200);
   assert.equal(result.totals.integrityOk, true);
 });
+
+test("余料按锯缝后的真实矩形计算并计入封边领料", () => {
+  const result = optimizeCutting(
+    [{
+      id: "side",
+      name: "侧板",
+      material: "卡其灰",
+      length: 2440,
+      width: 550,
+      quantity: 2,
+      grainLocked: true,
+      edgeLong: 0,
+      edgeShort: 0,
+    }],
+    {
+      boardWidth: 1220,
+      boardHeight: 2440,
+      kerf: 3,
+      edgeLoss: 0,
+      roundEdgeBand: false,
+      materialRules: {
+        卡其灰: { leftoverEdgeMode: "1/0", minLeftoverWidth: 50 },
+      },
+    },
+  );
+
+  assert.equal(result.sheets[0].leftovers.length, 1);
+  assert.deepEqual(
+    [result.sheets[0].leftovers[0].length, result.sheets[0].leftovers[0].width],
+    [2440, 114],
+  );
+  assert.equal(result.totals.partEdgeBandRawMm, 0);
+  assert.equal(result.totals.leftoverEdgeBandRawMm, 2440);
+  assert.equal(result.totals.edgeBandOrderMeters, 2.44);
+});
+
+test("余料最小短边会过滤不可回收碎片", () => {
+  const result = optimizeCutting(
+    [{
+      id: "side",
+      name: "侧板",
+      material: "卡其灰",
+      length: 2440,
+      width: 550,
+      quantity: 2,
+      grainLocked: true,
+    }],
+    {
+      materialRules: {
+        卡其灰: { leftoverEdgeMode: "2/0", minLeftoverWidth: 150 },
+      },
+    },
+  );
+
+  assert.equal(result.totals.leftoverCount, 0);
+  assert.equal(result.totals.leftoverEdgeBandRawMm, 0);
+});
+
+test("不同颜色的余料封边规则分别汇总", () => {
+  const result = optimizeCutting(
+    [
+      { id: "white", name: "侧板", material: "暖白", length: 2440, width: 550, quantity: 2, grainLocked: true },
+      { id: "walnut", name: "侧板", material: "胡桃", length: 2440, width: 550, quantity: 2, grainLocked: true },
+    ],
+    {
+      edgeLoss: 0,
+      roundEdgeBand: false,
+      materialRules: {
+        暖白: { leftoverEdgeMode: "1/0", minLeftoverWidth: 50 },
+        胡桃: { leftoverEdgeMode: "2/0", minLeftoverWidth: 50 },
+      },
+    },
+  );
+
+  assert.deepEqual(
+    result.materialSummaries.map((item) => [
+      item.material,
+      item.leftoverCount,
+      item.leftoverEdgeBandRawMm,
+    ]),
+    [
+      ["暖白", 1, 2440],
+      ["胡桃", 1, 4880],
+    ],
+  );
+  assert.equal(result.totals.leftoverEdgeBandRawMm, 7320);
+});
