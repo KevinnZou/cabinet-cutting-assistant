@@ -279,33 +279,44 @@ function isValidPart(part) {
   return part.length > 0 && part.width > 0 && part.quantity > 0;
 }
 
-export function optimizeCutting(rawParts, rawSettings = {}) {
-  const settings = normalizeSettings(rawSettings);
-  const normalizedParts = rawParts.map(normalizePart);
-  const invalidParts = normalizedParts.filter((part) => !isValidPart(part));
-  const validParts = normalizedParts.filter(isValidPart);
-  const instances = expandParts(validParts).sort((a, b) => {
-    const largestSideDifference =
-      Math.max(b.length, b.width) - Math.max(a.length, a.width);
-    return largestSideDifference || b.length * b.width - a.length * a.width;
-  });
+const SORT_STRATEGIES = [
+  (a, b) =>
+    Math.max(b.length, b.width) - Math.max(a.length, a.width) ||
+    b.length * b.width - a.length * a.width,
+  (a, b) =>
+    b.length * b.width - a.length * a.width ||
+    Math.max(b.length, b.width) - Math.max(a.length, a.width),
+  (a, b) =>
+    Math.min(b.length, b.width) - Math.min(a.length, a.width) ||
+    b.length * b.width - a.length * a.width,
+  (a, b) =>
+    b.length + b.width - (a.length + a.width) ||
+    b.length * b.width - a.length * a.width,
+];
 
-  const sheetsByMaterial = new Map();
-  const oversized = [];
+function canFitEmptySheet(part, settings) {
+  return Boolean(findBestPlacement(createSheet(part.material, 0, settings), part, settings));
+}
 
-  for (const part of instances) {
-    const materialSheets = sheetsByMaterial.get(part.material) || [];
+function packMaterialInstances(instances, material, settings, comparator) {
+  const sheets = [];
+  const sorted = [...instances].sort(comparator);
+
+  for (const part of sorted) {
     let bestSheet = null;
     let bestPosition = null;
 
-    for (const sheet of materialSheets) {
+    for (const sheet of sheets) {
       const position = findBestPlacement(sheet, part, settings);
       if (
         position &&
         (!bestPosition ||
           position.scoreShortSide < bestPosition.scoreShortSide ||
           (position.scoreShortSide === bestPosition.scoreShortSide &&
-            position.scoreLongSide < bestPosition.scoreLongSide))
+            position.scoreLongSide < bestPosition.scoreLongSide) ||
+          (position.scoreShortSide === bestPosition.scoreShortSide &&
+            position.scoreLongSide === bestPosition.scoreLongSide &&
+            position.scoreArea < bestPosition.scoreArea))
       ) {
         bestSheet = sheet;
         bestPosition = position;
@@ -313,19 +324,102 @@ export function optimizeCutting(rawParts, rawSettings = {}) {
     }
 
     if (!bestPosition) {
-      const newSheet = createSheet(part.material, materialSheets.length, settings);
-      const position = findBestPlacement(newSheet, part, settings);
-      if (!position) {
-        oversized.push(part);
-        continue;
-      }
-      materialSheets.push(newSheet);
-      sheetsByMaterial.set(part.material, materialSheets);
-      bestSheet = newSheet;
-      bestPosition = position;
+      bestSheet = createSheet(material, sheets.length, settings);
+      bestPosition = findBestPlacement(bestSheet, part, settings);
+      if (!bestPosition) continue;
+      sheets.push(bestSheet);
     }
 
     commitPlacement(bestSheet, part, bestPosition);
+  }
+
+  return sheets;
+}
+
+function packingTieBreakScore(sheets) {
+  if (!sheets.length) return 0;
+  const lastSheet = sheets[sheets.length - 1];
+  return lastSheet.placements.reduce(
+    (sum, placement) => sum + placement.length * placement.width,
+    0,
+  );
+}
+
+function validatePackedSheets(sheets, settings) {
+  const issues = [];
+  const minX = settings.trim;
+  const minY = settings.trim;
+  const maxX = settings.boardWidth - settings.trim;
+  const maxY = settings.boardHeight - settings.trim;
+
+  for (const sheet of sheets) {
+    for (let index = 0; index < sheet.placements.length; index += 1) {
+      const placement = sheet.placements[index];
+      if (
+        placement.x < minX ||
+        placement.y < minY ||
+        placement.x + placement.placedWidth > maxX ||
+        placement.y + placement.placedHeight > maxY
+      ) {
+        issues.push(`${sheet.material} 第 ${sheet.number} 张存在越界板件：${placement.name}`);
+      }
+
+      for (let otherIndex = index + 1; otherIndex < sheet.placements.length; otherIndex += 1) {
+        const other = sheet.placements[otherIndex];
+        if (
+          rectanglesIntersect(
+            {
+              x: placement.x,
+              y: placement.y,
+              width: placement.placedWidth,
+              height: placement.placedHeight,
+            },
+            {
+              x: other.x,
+              y: other.y,
+              width: other.placedWidth,
+              height: other.placedHeight,
+            },
+          )
+        ) {
+          issues.push(`${sheet.material} 第 ${sheet.number} 张存在板件重叠`);
+        }
+      }
+    }
+  }
+
+  return issues;
+}
+
+export function optimizeCutting(rawParts, rawSettings = {}) {
+  const settings = normalizeSettings(rawSettings);
+  const normalizedParts = rawParts.map(normalizePart);
+  const invalidParts = normalizedParts.filter((part) => !isValidPart(part));
+  const validParts = normalizedParts.filter(isValidPart);
+  const instances = expandParts(validParts);
+  const sheetsByMaterial = new Map();
+  const oversized = instances.filter((part) => !canFitEmptySheet(part, settings));
+  const oversizedIds = new Set(oversized.map((part) => part.instanceId));
+  const placeableInstances = instances.filter((part) => !oversizedIds.has(part.instanceId));
+  const materialOrder = [...new Set(placeableInstances.map((part) => part.material))];
+
+  for (const material of materialOrder) {
+    const materialInstances = placeableInstances.filter((part) => part.material === material);
+    let bestSheets = null;
+
+    for (const comparator of SORT_STRATEGIES) {
+      const candidate = packMaterialInstances(materialInstances, material, settings, comparator);
+      if (
+        !bestSheets ||
+        candidate.length < bestSheets.length ||
+        (candidate.length === bestSheets.length &&
+          packingTieBreakScore(candidate) > packingTieBreakScore(bestSheets))
+      ) {
+        bestSheets = candidate;
+      }
+    }
+
+    sheetsByMaterial.set(material, bestSheets || []);
   }
 
   const sheets = [...sheetsByMaterial.values()].flat();
@@ -390,6 +484,10 @@ export function optimizeCutting(rawParts, rawSettings = {}) {
   const totalBoardArea = sheets.length * boardArea;
   const placedPartCount = sheets.reduce((sum, sheet) => sum + sheet.placements.length, 0);
   const expectedPlacedPartCount = instances.length - oversized.length;
+  const auditIssues = validatePackedSheets(sheets, settings);
+  if (placedPartCount !== expectedPlacedPartCount) {
+    auditIssues.push(`数量不一致：应排 ${expectedPlacedPartCount} 片，实际排入 ${placedPartCount} 片`);
+  }
 
   return {
     settings,
@@ -411,7 +509,9 @@ export function optimizeCutting(rawParts, rawSettings = {}) {
       edgeBandRawMm,
       edgeBandWithLossMm,
       edgeBandOrderMeters,
-      integrityOk: placedPartCount === expectedPlacedPartCount,
+      integrityOk: auditIssues.length === 0,
+      auditIssues,
+      strategyCount: SORT_STRATEGIES.length,
     },
   };
 }
