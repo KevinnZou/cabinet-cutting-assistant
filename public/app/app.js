@@ -2,6 +2,7 @@ import {
   DEFAULT_SETTINGS,
   createSampleParts,
   formatArea,
+  normalizeMaterialRules,
   normalizeSettings,
   optimizeCutting,
 } from "./optimizer.js";
@@ -53,6 +54,7 @@ const elements = {
   selectAllParts: document.getElementById("select-all-parts"),
   selectionSummary: document.getElementById("selection-summary"),
   partsReview: document.getElementById("parts-review"),
+  leftoverRulesList: document.getElementById("leftover-rules-list"),
   rawInput: document.getElementById("raw-input"),
   parseButton: document.getElementById("parse-button"),
   appendParse: document.getElementById("append-parse"),
@@ -89,9 +91,10 @@ function newPart(overrides = {}) {
 
 function createInitialState() {
   return {
-    version: 1,
+    version: 2,
     projectName: "新建柜体项目",
     settings: { ...DEFAULT_SETTINGS },
+    materialRules: {},
     parts: createSampleParts().map((part) => ({ ...part, id: makeId() })),
     updatedAt: new Date().toISOString(),
   };
@@ -104,9 +107,12 @@ function loadState() {
     const stored = JSON.parse(raw);
     if (!stored || !Array.isArray(stored.parts)) return createInitialState();
     return {
-      version: 1,
+      version: 2,
       projectName: String(stored.projectName || "新建柜体项目"),
       settings: normalizeSettings(stored.settings),
+      materialRules: normalizeMaterialRules(
+        stored.materialRules || stored.settings?.materialRules,
+      ),
       parts: stored.parts.map((part) => newPart(part)),
       updatedAt: stored.updatedAt || new Date().toISOString(),
     };
@@ -189,6 +195,46 @@ function edgeLabelFromPart(part) {
 function edgePresetOptions(selectedValue = "1/0") {
   return EDGE_PRESETS
     .map((preset) => `<option value="${preset.value}" ${selectedValue === preset.value ? "selected" : ""}>${preset.label}</option>`)
+    .join("");
+}
+
+function materialRuleFor(material) {
+  const normalized = normalizeMaterialRules(state.materialRules);
+  return normalized[material] || {
+    leftoverEdgeMode: "0/0",
+    minLeftoverWidth: 50,
+  };
+}
+
+function renderLeftoverRules() {
+  if (!elements.leftoverRulesList) return;
+  const materials = [...new Set(state.parts.map((part) => String(part.material || "未分类").trim() || "未分类"))];
+  state.materialRules = normalizeMaterialRules(state.materialRules);
+
+  if (!materials.length) {
+    elements.leftoverRulesList.innerHTML = '<p class="leftover-empty">添加板件后，可按颜色设置余料封边。</p>';
+    return;
+  }
+
+  elements.leftoverRulesList.innerHTML = materials
+    .map((material) => {
+      const rule = materialRuleFor(material);
+      return `
+        <div class="leftover-rule-row" data-material="${escapeHtml(material)}">
+          <div class="leftover-material">
+            <strong>${escapeHtml(material)}</strong>
+            <span>可回收余料按本颜色单独统计</span>
+          </div>
+          <label>
+            <span>余料封边</span>
+            <select data-material-rule="leftoverEdgeMode">${edgePresetOptions(rule.leftoverEdgeMode)}</select>
+          </label>
+          <label>
+            <span>最小短边</span>
+            <div class="unit-input"><input data-material-rule="minLeftoverWidth" type="number" min="0" max="1000" step="1" value="${rule.minLeftoverWidth}" /><em>mm</em></div>
+          </label>
+        </div>`;
+    })
     .join("");
 }
 
@@ -303,6 +349,7 @@ function renderParts() {
   elements.calculationReady.textContent = count ? `共 ${count} 片，等待排版` : "请先添加板件";
   renderPartsReview();
   renderBatchToolbar();
+  renderLeftoverRules();
   updateRuleSummary();
 }
 
@@ -338,8 +385,8 @@ function renderParseFeedback(result) {
     ? `<ul>${warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join("")}</ul>`
     : "";
   elements.parseFeedback.innerHTML = `
-    <strong>已识别 ${result.stats.partTypeCount} 种板件 / ${result.stats.pieceCount} 片</strong>
-    <span>解析覆盖率约 ${coverage}% · 请在下方确认尺寸、颜色、木纹和封边。</span>
+    <strong>已识别 ${result.stats.partTypeCount} 种板件 / ${result.stats.pieceCount} 片${result.stats.materialRuleCount ? ` · ${result.stats.materialRuleCount} 条余料规则` : ""}</strong>
+    <span>解析覆盖率约 ${coverage}% · 请在下方确认尺寸、颜色、木纹、板件封边和余料规则。</span>
     ${warningHtml}
     ${result.warnings.length > warnings.length ? `<small>另有 ${result.warnings.length - warnings.length} 行未展示。</small>` : ""}
   `;
@@ -376,6 +423,9 @@ function parseRawInput() {
   );
 
   state.parts = elements.appendParse.checked ? [...state.parts, ...parsedParts] : parsedParts;
+  state.materialRules = elements.appendParse.checked
+    ? { ...state.materialRules, ...result.materialRules }
+    : result.materialRules;
   selectedPartIds.clear();
   renderParts();
   resetResults();
@@ -458,7 +508,10 @@ function updateStateFromPartInput(target) {
   else if (target.type === "number" || target.tagName === "SELECT") part[field] = parseNumericValue(target.value);
   else part[field] = target.value;
 
-  if (field === "material") part.reviewFlags = (part.reviewFlags || []).filter((flag) => !flag.includes("颜色"));
+  if (field === "material") {
+    part.reviewFlags = (part.reviewFlags || []).filter((flag) => !flag.includes("颜色"));
+    renderLeftoverRules();
+  }
   if (field === "quantity") part.reviewFlags = (part.reviewFlags || []).filter((flag) => !flag.includes("数量"));
   if (field === "name") part.reviewFlags = (part.reviewFlags || []).filter((flag) => !flag.includes("板件名"));
   if (field === "length" || field === "width") part.reviewFlags = (part.reviewFlags || []).filter((flag) => !flag.includes("尺寸"));
@@ -563,8 +616,10 @@ function renderMaterialSummaryItems(materialSummaries) {
         </div>
         <dl>
           <div><dt>板材</dt><dd>${item.sheetCount} 张</dd></div>
+          <div><dt>板件封边</dt><dd>${(item.partEdgeBandRawMm / 1000).toFixed(2)} 米</dd></div>
+          <div><dt>余料封边</dt><dd>${(item.leftoverEdgeBandRawMm / 1000).toFixed(2)} 米</dd></div>
           <div><dt>封边领料</dt><dd>${item.edgeBandOrderMeters} 米</dd></div>
-          <div><dt>净封边</dt><dd>${(item.edgeBandRawMm / 1000).toFixed(2)} 米</dd></div>
+          <div><dt>可回收余料</dt><dd>${item.leftoverCount} 块</dd></div>
           <div><dt>利用率</dt><dd>${formatPercent(item.utilization)}</dd></div>
         </dl>
       </article>
@@ -576,6 +631,7 @@ function createSheetSignature(sheet) {
   return JSON.stringify({
     material: sheet.material,
     utilization: Number(sheet.utilization).toFixed(4),
+    leftoverRule: sheet.leftoverRule,
     placements: sheet.placements.map((placement) => ({
       name: placement.name,
       length: placement.length,
@@ -588,6 +644,15 @@ function createSheetSignature(sheet) {
       grainLocked: Boolean(placement.grainLocked),
       edgeLong: placement.edgeLong,
       edgeShort: placement.edgeShort,
+    })),
+    leftovers: sheet.leftovers.map((leftover) => ({
+      length: leftover.length,
+      width: leftover.width,
+      x: leftover.x,
+      y: leftover.y,
+      placedWidth: leftover.placedWidth,
+      placedHeight: leftover.placedHeight,
+      edgeMode: leftover.edgeMode,
     })),
   });
 }
@@ -642,6 +707,18 @@ function renderSheetSvg(sheet, settings, paletteIndex) {
   const boardH = settings.boardHeight;
   const color = COLOR_PALETTE[paletteIndex % COLOR_PALETTE.length];
   const trim = settings.trim;
+  const leftovers = sheet.leftovers
+    .map((leftover) => {
+      const labelFits =
+        leftover.placedWidth > boardW * 0.1 &&
+        leftover.placedHeight > boardH * 0.03;
+      return `
+        <g class="leftover-shape">
+          <rect x="${leftover.x}" y="${leftover.y}" width="${leftover.placedWidth}" height="${leftover.placedHeight}" fill="#fff4c7" fill-opacity="0.72" stroke="#9a6a1a" stroke-width="2" stroke-dasharray="10 7" />
+          ${labelFits ? `<text x="${leftover.x + leftover.placedWidth / 2}" y="${leftover.y + leftover.placedHeight / 2}" text-anchor="middle" dominant-baseline="middle" fill="#6d4a10" font-size="24" font-weight="700">余料 ${leftover.length}×${leftover.width}</text>` : ""}
+        </g>`;
+    })
+    .join("");
   const items = sheet.placements
     .map((placement, index) => {
       const labelFits = placement.placedWidth > boardW * 0.11 && placement.placedHeight > boardH * 0.035;
@@ -671,6 +748,7 @@ function renderSheetSvg(sheet, settings, paletteIndex) {
       </defs>
       <rect width="${boardW}" height="${boardH}" fill="url(#grid-${paletteIndex}-${sheet.number})" />
       ${trimRect}
+      ${leftovers}
       ${items}
       <rect x="1" y="1" width="${boardW - 2}" height="${boardH - 2}" fill="none" stroke="#52635a" stroke-width="3" />
     </svg>`;
@@ -700,7 +778,7 @@ function renderSheetCards(result, material = "") {
         <div class="sheet-card-head">
           <div>
             <strong>${escapeHtml(sheet.material)} · ${sheetLabel}</strong>
-            <span>${result.settings.boardWidth} × ${result.settings.boardHeight} mm · 单张 ${sheet.placements.length} 片${group.count > 1 ? ` · 共 ${group.count} 张同版` : ""}</span>
+            <span>${result.settings.boardWidth} × ${result.settings.boardHeight} mm · 单张 ${sheet.placements.length} 片 · 余料 ${sheet.leftovers.length} 块${group.count > 1 ? ` · 共 ${group.count} 张同版` : ""}</span>
           </div>
           ${countLabel}
           <span class="usage-pill">利用率 ${formatPercent(sheet.utilization)}</span>
@@ -712,6 +790,12 @@ function renderSheetCards(result, material = "") {
               <div class="placement-row">
                 <i>${index + 1}</i>
                 <div><strong>${escapeHtml(placement.name)}</strong><span>${placement.length} × ${placement.width} mm · ${edgeLabelFromPart(placement)}${placement.rotated ? " · 已旋转" : ""}${placement.grainLocked ? " · 木纹锁定" : ""}</span></div>
+              </div>
+            `).join("")}
+            ${sheet.leftovers.map((leftover, index) => `
+              <div class="placement-row leftover-row">
+                <i>余</i>
+                <div><strong>可回收余料 ${index + 1}</strong><span>${leftover.length} × ${leftover.width} mm · ${edgeLabelFromPart(leftover)} · 净封边 ${(leftover.edgeBandRawMm / 1000).toFixed(2)} 米</span></div>
               </div>
             `).join("")}
           </div>
@@ -732,8 +816,10 @@ function createPrintDocument(result) {
         <td>${escapeHtml(item.material)}</td>
         <td>${item.sheetCount} 张</td>
         <td>${item.partCount} 片</td>
-        <td>${(item.edgeBandRawMm / 1000).toFixed(2)} 米</td>
+        <td>${(item.partEdgeBandRawMm / 1000).toFixed(2)} 米</td>
+        <td>${(item.leftoverEdgeBandRawMm / 1000).toFixed(2)} 米</td>
         <td>${item.edgeBandOrderMeters} 米</td>
+        <td>${item.leftoverCount} 块</td>
         <td>${formatPercent(item.utilization)}</td>
       </tr>
     `)
@@ -755,6 +841,16 @@ function createPrintDocument(result) {
           </tr>
         `)
         .join("");
+      const leftovers = sheet.leftovers
+        .map((leftover, index) => `
+          <tr>
+            <td>余${index + 1}</td>
+            <td>可回收余料</td>
+            <td>${leftover.length} × ${leftover.width}</td>
+            <td>${edgeLabelFromPart(leftover)} / 净 ${(leftover.edgeBandRawMm / 1000).toFixed(2)} 米</td>
+          </tr>
+        `)
+        .join("");
 
       return `
         <section class="sheet-card">
@@ -769,7 +865,7 @@ function createPrintDocument(result) {
             ${renderSheetSvg(sheet, result.settings, sheetIndex)}
             <table>
               <thead><tr><th>#</th><th>板件</th><th>尺寸 mm</th><th>封边 / 方向</th></tr></thead>
-              <tbody>${placements}</tbody>
+              <tbody>${placements}${leftovers}</tbody>
             </table>
           </div>
         </section>
@@ -832,13 +928,13 @@ function createPrintDocument(result) {
       <div class="stat"><span>板材用量</span><strong>${totals.sheetCount} 张</strong></div>
       <div class="stat"><span>封边领料</span><strong>${totals.edgeBandOrderMeters} 米</strong></div>
       <div class="stat"><span>整体利用率</span><strong>${formatPercent(totals.utilization)}</strong></div>
-      <div class="stat"><span>已排板件</span><strong>${totals.placedPartCount} 片</strong></div>
+      <div class="stat"><span>余料 / 板件</span><strong>${totals.leftoverCount} 块 / ${totals.placedPartCount} 片</strong></div>
     </section>
 
     <section class="summary-block">
       <h2>按颜色汇总</h2>
       <table>
-        <thead><tr><th>颜色 / 材质</th><th>板材</th><th>片数</th><th>封边净用量</th><th>封边领料</th><th>利用率</th></tr></thead>
+        <thead><tr><th>颜色 / 材质</th><th>板材</th><th>片数</th><th>板件封边</th><th>余料封边</th><th>领料</th><th>余料</th><th>利用率</th></tr></thead>
         <tbody>${materialRows}</tbody>
       </table>
     </section>
@@ -881,13 +977,13 @@ function renderResults(result) {
     totals.placedPartCount === totals.partCount;
   elements.resultQuality.className = `result-quality ${productionReady ? "is-ready" : "needs-review"}`;
   elements.resultQuality.innerHTML = productionReady
-    ? `<i>✓</i><div><strong>生产校验通过</strong><span>${totals.partCount} 片已全部排入，无越界、重叠或少算；已比较 ${totals.strategyCount || 1} 套排版策略。</span></div>`
+    ? `<i>✓</i><div><strong>生产校验通过</strong><span>${totals.partCount} 片已全部排入，无越界、重叠或少算；识别 ${totals.leftoverCount} 块可回收余料，并已比较 ${totals.strategyCount || 1} 套排版策略。</span></div>`
     : `<i>!</i><div><strong>结果需要处理后再下单</strong><span>请先解决下方异常项，系统不会把异常结果标记为可生产。</span></div>`;
   elements.resultStats.innerHTML = `
     <article class="stat-card accent"><span>板材用量</span><strong>${totals.sheetCount}<em>张</em></strong><small>${totals.materialCount} 种颜色 / 材质</small></article>
-    <article class="stat-card"><span>封边领料</span><strong>${totals.edgeBandOrderMeters}<em>米</em></strong><small>按颜色分别损耗取整后汇总</small></article>
+    <article class="stat-card"><span>封边领料</span><strong>${totals.edgeBandOrderMeters}<em>米</em></strong><small>板件 ${(totals.partEdgeBandRawMm / 1000).toFixed(2)} m + 余料 ${(totals.leftoverEdgeBandRawMm / 1000).toFixed(2)} m</small></article>
     <article class="stat-card"><span>整体利用率</span><strong>${formatPercent(totals.utilization)}</strong><small>板件面积 ${formatArea(totals.usedArea)}</small></article>
-    <article class="stat-card"><span>已排板件</span><strong>${totals.placedPartCount}<em>片</em></strong><small>共录入 ${totals.partCount} 片</small></article>
+    <article class="stat-card"><span>可回收余料</span><strong>${totals.leftoverCount}<em>块</em></strong><small>面积 ${formatArea(totals.leftoverArea)}</small></article>
   `;
   elements.materialSummary.innerHTML = renderMaterialSummaryItems(result.materialSummaries);
   elements.printSummary.innerHTML = `
@@ -899,6 +995,7 @@ function renderResults(result) {
       <div><dt>标准板</dt><dd>${result.settings.boardWidth} × ${result.settings.boardHeight} mm</dd></div>
       <div><dt>板材张数</dt><dd>${totals.sheetCount} 张</dd></div>
       <div><dt>封边领料</dt><dd>${totals.edgeBandOrderMeters} 米</dd></div>
+      <div><dt>可回收余料</dt><dd>${totals.leftoverCount} 块</dd></div>
       <div><dt>整体利用率</dt><dd>${formatPercent(totals.utilization)}</dd></div>
     </dl>
     <section>
@@ -933,11 +1030,12 @@ function renderResults(result) {
     renderSheetCards(result);
   }
 
-  const edgeFormula = `${(totals.edgeBandRawMm / 1000).toFixed(2)} m × (1 + ${result.settings.edgeLoss}%)`;
+  const edgeFormula = `(${(totals.partEdgeBandRawMm / 1000).toFixed(2)} + ${(totals.leftoverEdgeBandRawMm / 1000).toFixed(2)}) m × (1 + ${result.settings.edgeLoss}%)`;
   elements.calculationNotes.innerHTML = `
     <div><span>板材计算</span><strong>按颜色 / 材质分板</strong><small>相同材质参与同一组二维排版，不同材质自动分开。</small></div>
     <div><span>切割余量</span><strong>${result.settings.kerf} mm 锯缝 · ${result.settings.trim} mm 修边</strong><small>板件之间预留锯缝，标准板四周扣除修边宽度。</small></div>
-    <div><span>封边公式</span><strong>${edgeFormula}</strong><small>${result.settings.roundEdgeBand ? "不同颜色分别按整米向上取整，再汇总领料。" : "不同颜色分别保留两位小数，再汇总领料。"}</small></div>
+    <div><span>余料口径</span><strong>${totals.leftoverCount} 块 · ${formatArea(totals.leftoverArea)}</strong><small>按每种颜色设置的最小短边过滤，锯缝与修边不计入可回收余料。</small></div>
+    <div><span>封边公式</span><strong>${edgeFormula}</strong><small>板件与余料封边合并计损耗；${result.settings.roundEdgeBand ? "不同颜色分别按整米向上取整，再汇总领料。" : "不同颜色分别保留两位小数，再汇总领料。"}</small></div>
   `;
 }
 
@@ -947,7 +1045,7 @@ function runOptimizationInWorker(parts, settings) {
   }
 
   calculationWorker?.terminate();
-  calculationWorker = new Worker("./optimizer-worker.js?v=20260729-4", { type: "module" });
+  calculationWorker = new Worker("./optimizer-worker.js?v=20260729-5", { type: "module" });
   const requestId = makeId();
 
   return new Promise((resolve, reject) => {
@@ -996,7 +1094,10 @@ async function calculate() {
   elements.calculateButton.querySelector("span").textContent = "正在比较排版方案…";
 
   try {
-    const result = await runOptimizationInWorker(state.parts, state.settings);
+    const result = await runOptimizationInWorker(state.parts, {
+      ...state.settings,
+      materialRules: state.materialRules,
+    });
     renderResults(result);
     elements.calculateButton.querySelector("span").textContent = "重新排版计算";
     document.getElementById("results").scrollIntoView({ behavior: "smooth", block: "start" });
@@ -1037,17 +1138,22 @@ function exportCsv() {
     ["项目", state.projectName],
     ["标准板", `${lastResult.settings.boardWidth} × ${lastResult.settings.boardHeight} mm`],
     ["板材张数", lastResult.totals.sheetCount],
+    ["板件净封边（米）", (lastResult.totals.partEdgeBandRawMm / 1000).toFixed(2)],
+    ["余料净封边（米）", (lastResult.totals.leftoverEdgeBandRawMm / 1000).toFixed(2)],
     ["封边领料（米）", lastResult.totals.edgeBandOrderMeters],
     [],
     ["按颜色汇总"],
-    ["颜色/材质", "规格数", "片数", "板材张数", "封边净用量(米)", "封边领料(米)", "利用率"],
+    ["颜色/材质", "规格数", "片数", "板材张数", "板件封边(m)", "余料封边(m)", "封边领料(m)", "余料块数", "余料面积(m²)", "利用率"],
     ...lastResult.materialSummaries.map((item) => [
       item.material,
       item.partTypeCount,
       item.partCount,
       item.sheetCount,
-      (item.edgeBandRawMm / 1000).toFixed(2),
+      (item.partEdgeBandRawMm / 1000).toFixed(2),
+      (item.leftoverEdgeBandRawMm / 1000).toFixed(2),
       item.edgeBandOrderMeters,
+      item.leftoverCount,
+      (item.leftoverArea / 1_000_000).toFixed(3),
       formatPercent(item.utilization),
     ]),
     [],
@@ -1084,6 +1190,27 @@ function exportCsv() {
       ]);
     });
   });
+  rows.push(
+    [],
+    ["可回收余料清单"],
+    ["颜色/材质", "板号", "序号", "长度(mm)", "宽度(mm)", "封边方式", "净封边(m)", "面积(m²)", "X(mm)", "Y(mm)"],
+  );
+  lastResult.sheets.forEach((sheet) => {
+    sheet.leftovers.forEach((leftover, index) => {
+      rows.push([
+        sheet.material,
+        sheet.number,
+        index + 1,
+        leftover.length,
+        leftover.width,
+        edgeLabelFromPart(leftover),
+        (leftover.edgeBandRawMm / 1000).toFixed(2),
+        (leftover.area / 1_000_000).toFixed(3),
+        leftover.x,
+        leftover.y,
+      ]);
+    });
+  });
   const csv = rows
     .map((row) => row.map((cell) => `"${String(cell ?? "").replaceAll('"', '""')}"`).join(","))
     .join("\r\n");
@@ -1096,9 +1223,12 @@ async function importProject(file) {
     const stored = JSON.parse(await file.text());
     if (!stored || !Array.isArray(stored.parts)) throw new Error("invalid");
     state = {
-      version: 1,
+      version: 2,
       projectName: String(stored.projectName || file.name.replace(/\.json$/i, "")),
       settings: normalizeSettings(stored.settings),
+      materialRules: normalizeMaterialRules(
+        stored.materialRules || stored.settings?.materialRules,
+      ),
       parts: stored.parts.map((part) => newPart(part)),
       updatedAt: new Date().toISOString(),
     };
@@ -1130,6 +1260,7 @@ document.getElementById("add-part-button").addEventListener("click", () => {
 
 document.getElementById("sample-button").addEventListener("click", () => {
   state.parts = createSampleParts().map((part) => ({ ...part, id: makeId() }));
+  state.materialRules = {};
   selectedPartIds.clear();
   state.settings = { ...DEFAULT_SETTINGS };
   renderSettings();
@@ -1170,6 +1301,28 @@ elements.partsBody.addEventListener("change", (event) => {
   if (event.target.checked) selectedPartIds.add(row.dataset.id);
   else selectedPartIds.delete(row.dataset.id);
   renderBatchToolbar();
+});
+elements.leftoverRulesList.addEventListener("change", (event) => {
+  const control = event.target.closest("[data-material-rule]");
+  const row = control?.closest("[data-material]");
+  if (!control || !row) return;
+  const material = row.dataset.material;
+  const rule = materialRuleFor(material);
+  if (control.dataset.materialRule === "minLeftoverWidth") {
+    rule.minLeftoverWidth = Math.max(
+      0,
+      Math.min(1000, Math.round(parseNumericValue(control.value, 50))),
+    );
+  } else {
+    rule.leftoverEdgeMode = edgePresetFromValue(control.value).value;
+  }
+  state.materialRules = {
+    ...state.materialRules,
+    [material]: rule,
+  };
+  renderLeftoverRules();
+  resetResults();
+  saveState();
 });
 elements.partsBody.addEventListener("click", (event) => {
   const button = event.target.closest('[data-action="delete"]');
