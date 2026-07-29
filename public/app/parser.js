@@ -213,7 +213,7 @@ function parseEdges(line) {
     edgeLong = 2;
   } else if (/(?:单长边|长边\s*1|长\s*1|一条长边|左封|右封|前封|后封)/.test(line)) {
     edgeLong = 1;
-  } else if (/(?:全单边|单边封|封单边|封一边|一边封|余料.*单边|(?:^|\s|\(|（)单边(?:$|\s|\)|）)|都单边|封边\s*[:=]?\s*单边)/.test(line)) {
+  } else if (/(?:全单边|单边封|封单边|封一边|一边封|(?:^|\s|\(|（)单边(?:$|\s|\)|）)|都单边|封边\s*[:=]?\s*单边)/.test(line)) {
     edgeLong = 1;
   }
 
@@ -249,7 +249,27 @@ function parseEdges(line) {
 }
 
 function hasEdgeInstruction(line) {
-  return /(?:封边|封单边|单边封|全单边|单边|双边封|封双边|全双边|两边封|长条\s*双边|条子\s*双边|线条\s*双边|地脚线.*双边|3边|三边|4边|四边|四周|周边|全封|长边|短边|双长|两长|双短|两短|左右封|上下封|左封|右封|上封|下封|一长一短|长短各一|两长一短|两短一长|余料.*单边|门.*四周|不封边|不用封边|无需封边|免封边|不封)/.test(line);
+  return /(?:封边|封单边|单边封|全单边|单边|双边封|封双边|全双边|两边封|长条\s*双边|条子\s*双边|线条\s*双边|地脚线.*双边|3边|三边|4边|四边|四周|周边|全封|长边|短边|双长|两长|双短|两短|左右封|上下封|左封|右封|上封|下封|一长一短|长短各一|两长一短|两短一长|门.*四周|不封边|不用封边|无需封边|免封边|不封)/.test(line);
+}
+
+function hasLeftoverInstruction(line) {
+  return /(?:余料|剩料|余板|边角料)/.test(line) &&
+    /(?:封|边|不封|免封|无需|保留|留料|短边|最小|一长一短|两长一短|两短一长)/.test(line);
+}
+
+function parseLeftoverRule(line) {
+  const edgeText = line.replace(/(?:余料|剩料|余板|边角料)/g, " ");
+  const edges = parseEdges(edgeText);
+  const minMatch = line.match(
+    /(?:最小(?:短边)?|短边|保留|留料)\s*(?:不少于|不小于|至少|>=|≥|>|:|=)?\s*(\d{1,4})\s*(?:mm|毫米)?/i,
+  );
+
+  return {
+    leftoverEdgeMode: edges.explicit
+      ? `${edges.edgeLong}/${edges.edgeShort}`
+      : undefined,
+    minLeftoverWidth: minMatch ? Math.max(0, Number(minMatch[1])) : undefined,
+  };
 }
 
 function parseGrain(line) {
@@ -328,6 +348,7 @@ export function parsePartsText(text, options = {}) {
   const parseOptions = { ...DEFAULT_PARSE_OPTIONS, ...options };
   const warnings = [];
   const parts = [];
+  const materialRules = {};
   let currentMaterial = parseOptions.defaultMaterial;
   let currentEdges = parseOptions.defaultEdges;
   let currentEdgesExplicit = false;
@@ -346,7 +367,26 @@ export function parsePartsText(text, options = {}) {
 
     const size = parseSize(line);
     if (!size) {
-      if (hasEdgeInstruction(line)) {
+      if (hasLeftoverInstruction(line)) {
+        const prefixedMaterial = line.match(
+          /^(.{2,20}?)\s*(?:的)?(?:余料|剩料|余板|边角料)/,
+        )?.[1]?.trim();
+        const ruleMaterial =
+          prefixedMaterial && !/^(?:以下|以上|本批|所有|全部)$/.test(prefixedMaterial)
+            ? prefixedMaterial
+            : currentMaterial;
+        const parsedRule = parseLeftoverRule(line);
+        const existingRule = materialRules[ruleMaterial] || {
+          leftoverEdgeMode: "0/0",
+          minLeftoverWidth: 50,
+        };
+        materialRules[ruleMaterial] = {
+          leftoverEdgeMode:
+            parsedRule.leftoverEdgeMode ?? existingRule.leftoverEdgeMode,
+          minLeftoverWidth:
+            parsedRule.minLeftoverWidth ?? existingRule.minLeftoverWidth,
+        };
+      } else if (hasEdgeInstruction(line)) {
         currentEdges = parseEdges(line);
         currentEdgesExplicit = true;
         const futureOnly = /(?:以下|下面|后面|后续|往下|之后)/.test(line) && !/(?:以上|上面|前面|前述|之前)/.test(line);
@@ -425,12 +465,14 @@ export function parsePartsText(text, options = {}) {
 
   return {
     parts,
+    materialRules,
     warnings,
     stats: {
       lineCount: lines.length,
       partTypeCount: parts.length,
       pieceCount: parts.reduce((sum, part) => sum + part.quantity, 0),
       reviewCount: parts.filter((part) => part.reviewFlags.length > 0).length,
+      materialRuleCount: Object.keys(materialRules).length,
     },
   };
 }
