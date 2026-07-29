@@ -9,7 +9,7 @@
     />
     <meta name="theme-color" content="#14271e" />
     <title>开料工作台｜柜体板开料计算助手</title>
-    <link rel="stylesheet" href="./app.css?v=20260729-3" />
+    <link rel="stylesheet" href="./app.css?v=20260729-4" />
   </head>
   <body>
     <header class="topbar">
@@ -159,20 +159,6 @@
               <div><h2 id="parts-title">板件确认表</h2><p id="parts-summary">0 种板件 · 0 片</p></div>
             </div>
             <div class="table-actions">
-              <div class="batch-edge-actions" aria-label="批量修改封边方式">
-                <select id="batch-edge-select" aria-label="批量封边方式">
-                  <option value="1/0">单边</option>
-                  <option value="2/2">四边</option>
-                  <option value="2/0">双长边</option>
-                  <option value="0/2">双短边</option>
-                  <option value="1/1">一长一短</option>
-                  <option value="2/1">两长一短</option>
-                  <option value="1/2">两短一长</option>
-                  <option value="0/1">单短边</option>
-                  <option value="0/0">不封边</option>
-                </select>
-                <button class="button subtle compact-button" id="apply-edge-button" type="button">批量封边</button>
-              </div>
               <button class="text-button" id="sample-button" type="button">载入示例</button>
               <button class="button dark" id="add-part-button" type="button"><span>＋</span> 添加板件</button>
             </div>
@@ -180,13 +166,46 @@
 
           <div class="table-help">
             <span>解析结果会进入这里复核；尺寸按“长 × 宽”录入，木纹锁定后长边沿标准板长度方向。</span>
-            <span>封边可单行选择，也可用右上方批量修改全部板件。</span>
+            <span>系统推断项会标记“待确认”，正式计算前请逐项复核。</span>
+          </div>
+
+          <div class="parts-review" id="parts-review" aria-live="polite"></div>
+
+          <div class="batch-toolbar" id="batch-toolbar">
+            <label class="select-all-control">
+              <input id="select-all-parts" type="checkbox" />
+              <span id="selection-summary">选择全部</span>
+            </label>
+            <div class="batch-controls">
+              <select id="batch-edge-select" aria-label="批量封边方式">
+                <option value="1/0">单边</option>
+                <option value="2/2">四边</option>
+                <option value="2/0">双长边</option>
+                <option value="0/2">双短边</option>
+                <option value="1/1">一长一短</option>
+                <option value="2/1">两长一短</option>
+                <option value="1/2">两短一长</option>
+                <option value="0/1">单短边</option>
+                <option value="0/0">不封边</option>
+              </select>
+              <button class="button subtle compact-button batch-action" id="apply-edge-button" type="button">改封边</button>
+              <select id="batch-grain-select" aria-label="批量木纹方向">
+                <option value="true">锁定木纹</option>
+                <option value="false">允许旋转</option>
+              </select>
+              <button class="button subtle compact-button batch-action" id="apply-grain-button" type="button">改木纹</button>
+              <input id="batch-material-input" type="text" maxlength="40" placeholder="颜色 / 材质" aria-label="批量颜色或材质" />
+              <button class="button subtle compact-button batch-action" id="apply-material-button" type="button">改颜色</button>
+              <button class="button subtle compact-button" id="merge-duplicates-button" type="button">合并重复项</button>
+              <button class="button danger compact-button batch-action" id="delete-selected-button" type="button">删除所选</button>
+            </div>
           </div>
 
           <div class="parts-table-wrap">
             <table class="parts-table">
               <thead>
                 <tr>
+                  <th><span class="sr-only">选择</span></th>
                   <th>板件 / 颜色</th>
                   <th>长 × 宽（mm）</th>
                   <th>数量</th>
@@ -231,9 +250,16 @@
 
         <div class="result-content" id="result-content" hidden>
           <div class="print-summary" id="print-summary"></div>
+          <div class="result-quality" id="result-quality"></div>
           <div class="result-stats" id="result-stats"></div>
           <div class="material-summary" id="material-summary"></div>
           <div class="result-alerts" id="result-alerts"></div>
+          <div class="result-filter-bar" id="result-filter-bar" hidden>
+            <div><strong>排版图</strong><span id="layout-summary"></span></div>
+            <label>筛选颜色
+              <select id="result-material-filter"><option value="">全部颜色</option></select>
+            </label>
+          </div>
           <div class="sheet-list" id="sheet-list"></div>
           <div class="calculation-notes" id="calculation-notes"></div>
         </div>
@@ -247,6 +273,6 @@
     </footer>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="./app.js?v=20260729-3"></script>
+    <script type="module" src="./app.js?v=20260729-4"></script>
   </body>
 </html>
