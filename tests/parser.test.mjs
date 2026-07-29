@@ -242,3 +242,51 @@ test("以下都封只影响后续，普通全单边可回填当前颜色段", ()
   assert.equal(backfill.parts[1].edgeLong, 1);
   assert.equal(backfill.parts[1].edgeShort, 0);
 });
+
+test("支持括号、斜杠、@ 和英文 P 数量写法", () => {
+  const result = parsePartsText(`
+颜色：暖白
+层板 600x400(16) 四边
+侧板 800*500/8 双长
+拉条 2440x80@12P 双边封
+`);
+
+  assert.deepEqual(
+    result.parts.map((part) => [part.quantity, part.edgeLong, part.edgeShort]),
+    [
+      [16, 2, 2],
+      [8, 2, 0],
+      [12, 2, 0],
+    ],
+  );
+});
+
+test("支持生产现场方向封边说法", () => {
+  const result = parsePartsText(`
+门板 800x400=2 左右封
+抽面 700x180=3 上下封
+侧板 2200x550=2 封三边
+层板 760x520=4 长短各一
+`);
+
+  assert.deepEqual(
+    result.parts.map((part) => [part.edgeLong, part.edgeShort]),
+    [
+      [2, 0],
+      [0, 2],
+      [2, 1],
+      [1, 1],
+    ],
+  );
+});
+
+test("解析结果标注系统推断项供二次确认", () => {
+  const result = parsePartsText("活动板 600x400");
+
+  assert.equal(result.parts.length, 1);
+  assert.deepEqual(
+    result.parts[0].reviewFlags,
+    ["颜色待确认", "封边按默认单边", "数量按 1 片"],
+  );
+  assert.equal(result.stats.reviewCount, 1);
+});
