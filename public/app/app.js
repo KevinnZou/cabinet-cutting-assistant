@@ -7,8 +7,25 @@ import {
   optimizeCutting,
 } from "./optimizer.js";
 import { createParserExampleByType, parsePartsText } from "./parser.js";
+import {
+  createProjectRecord,
+  createSnapshot,
+  duplicateProject,
+  exportWorkspace,
+  formatProjectStatus,
+  getActiveProject,
+  importWorkspace,
+  loadWorkspace,
+  persistWorkspace,
+  restoreSnapshot,
+  upsertProject,
+} from "./project-store.js";
+import {
+  calculateQuotation,
+  createQuoteVersion,
+  normalizePriceBook,
+} from "./pricing.js";
 
-const STORAGE_KEY = "cabinet-cutting-assistant:project:v1";
 const OCR_SPACE_ENDPOINT = "https://api.ocr.space/parse/image";
 const OCR_SPACE_DEMO_KEY = "helloworld";
 const COLOR_PALETTE = ["#c5ec56", "#93c6a8", "#f0bc62", "#8fb8e8", "#d6a6e8", "#e7987f", "#aabf77"];
@@ -26,6 +43,10 @@ const EDGE_PRESETS = [
 
 const elements = {
   projectName: document.getElementById("project-name"),
+  customerName: document.getElementById("customer-name"),
+  customerPhone: document.getElementById("customer-phone"),
+  deliveryDate: document.getElementById("delivery-date"),
+  projectStatus: document.getElementById("project-status"),
   saveStatus: document.getElementById("save-status"),
   partsBody: document.getElementById("parts-body"),
   partsSummary: document.getElementById("parts-summary"),
@@ -67,6 +88,21 @@ const elements = {
   resultMaterialFilter: document.getElementById("result-material-filter"),
   layoutSummary: document.getElementById("layout-summary"),
   toast: document.getElementById("toast"),
+  quotationSection: document.getElementById("quotation-section"),
+  materialPriceList: document.getElementById("material-price-list"),
+  quoteDiscount: document.getElementById("quote-discount"),
+  leftoverOwnership: document.getElementById("leftover-ownership"),
+  quoteNote: document.getElementById("quote-note"),
+  quoteSummary: document.getElementById("quote-summary"),
+  quoteVersionList: document.getElementById("quote-version-list"),
+  projectCenterDialog: document.getElementById("project-center-dialog"),
+  projectList: document.getElementById("project-list"),
+  projectSearch: document.getElementById("project-search"),
+  projectFilter: document.getElementById("project-filter"),
+  historyDialog: document.getElementById("history-dialog"),
+  historyList: document.getElementById("history-list"),
+  priceBookDialog: document.getElementById("price-book-dialog"),
+  workspaceFile: document.getElementById("workspace-file"),
 };
 
 function makeId() {
@@ -91,38 +127,48 @@ function newPart(overrides = {}) {
 
 function createInitialState() {
   return {
-    version: 2,
+    version: 3,
     projectName: "新建柜体项目",
     settings: { ...DEFAULT_SETTINGS },
     materialRules: {},
+    customer: { name: "", phone: "", address: "" },
+    status: "draft",
+    deliveryDate: "",
+    projectNotes: "",
+    pricing: { discount: 0, leftoverOwnership: "customer", note: "" },
+    snapshots: [],
+    quoteVersions: [],
     parts: createSampleParts().map((part) => ({ ...part, id: makeId() })),
     updatedAt: new Date().toISOString(),
   };
 }
 
-function loadState() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return createInitialState();
-    const stored = JSON.parse(raw);
-    if (!stored || !Array.isArray(stored.parts)) return createInitialState();
-    return {
-      version: 2,
-      projectName: String(stored.projectName || "新建柜体项目"),
-      settings: normalizeSettings(stored.settings),
-      materialRules: normalizeMaterialRules(
-        stored.materialRules || stored.settings?.materialRules,
-      ),
-      parts: stored.parts.map((part) => newPart(part)),
-      updatedAt: stored.updatedAt || new Date().toISOString(),
-    };
-  } catch {
-    return createInitialState();
-  }
+function hydrateProject(stored) {
+  const base = createInitialState();
+  const project = createProjectRecord({ ...base, ...(stored || {}) });
+  return {
+    ...project,
+    settings: normalizeSettings(project.settings),
+    materialRules: normalizeMaterialRules(
+      project.materialRules || project.settings?.materialRules,
+    ),
+    parts: Array.isArray(project.parts)
+      ? project.parts.map((part) => newPart(part))
+      : base.parts,
+    pricing: {
+      discount: 0,
+      leftoverOwnership: "customer",
+      note: "",
+      ...(project.pricing || {}),
+    },
+  };
 }
 
-let state = loadState();
+let workspace = loadWorkspace(createInitialState());
+let state = hydrateProject(getActiveProject(workspace) || createInitialState());
+workspace.activeProjectId = state.id;
 let lastResult = null;
+let lastQuotation = null;
 let saveTimer = null;
 let toastTimer = null;
 let calculationWorker = null;
@@ -168,7 +214,8 @@ function saveState({ immediate = false } = {}) {
   const persist = () => {
     try {
       state.updatedAt = new Date().toISOString();
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      state = upsertProject(workspace, state);
+      persistWorkspace(workspace);
       elements.saveStatus.textContent = "已保存到本机";
     } catch {
       elements.saveStatus.textContent = "浏览器阻止了本地保存";
@@ -177,6 +224,28 @@ function saveState({ immediate = false } = {}) {
 
   if (immediate) persist();
   else saveTimer = setTimeout(persist, 320);
+}
+
+function saveSnapshot(reason) {
+  createSnapshot(state, reason);
+  state = upsertProject(workspace, state);
+  persistWorkspace(workspace);
+  renderHistory();
+}
+
+function switchProject(projectId) {
+  const project = workspace.projects.find(
+    (item) => item.id === projectId && !item.deletedAt,
+  );
+  if (!project) return;
+  saveState({ immediate: true });
+  workspace.activeProjectId = project.id;
+  state = hydrateProject(project);
+  selectedPartIds.clear();
+  lastResult = null;
+  lastQuotation = null;
+  renderAll();
+  persistWorkspace(workspace);
 }
 
 function edgePresetFromValue(value) {
@@ -369,11 +438,13 @@ function updateRuleSummary() {
 
 function resetResults() {
   lastResult = null;
+  lastQuotation = null;
   elements.resultPlaceholder.hidden = false;
   elements.resultContent.hidden = true;
   elements.resultActions.hidden = true;
   elements.resultFilterBar.hidden = true;
   elements.resultCaption.textContent = "结果仅在当前设备生成";
+  elements.quotationSection.hidden = true;
 }
 
 function renderParseFeedback(result) {
@@ -430,7 +501,7 @@ function parseRawInput() {
   renderParts();
   resetResults();
   renderParseFeedback(result);
-  saveState();
+  saveSnapshot("文字清单解析");
   document.getElementById("parts-title").scrollIntoView({ behavior: "smooth", block: "start" });
   showToast(`已生成 ${result.stats.partTypeCount} 种板件，请二次确认`);
 }
@@ -531,7 +602,7 @@ function selectedParts() {
 function finishBatchChange(message) {
   renderParts();
   resetResults();
-  saveState();
+  saveSnapshot(message);
   showToast(message);
 }
 
@@ -599,6 +670,146 @@ function mergeDuplicateParts() {
   state.parts = state.parts.filter((part) => !removedIds.has(part.id));
   selectedPartIds.clear();
   finishBatchChange(`已合并 ${duplicates.length} 组重复规格`);
+}
+
+function formatDateTime(value) {
+  if (!value) return "—";
+  return new Date(value).toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
+function renderProjectList() {
+  const query = elements.projectSearch.value.trim().toLowerCase();
+  const filter = elements.projectFilter.value;
+  const projects = workspace.projects
+    .filter((project) => {
+      if (filter === "trash") return Boolean(project.deletedAt);
+      if (filter === "archived") return !project.deletedAt && project.status === "archived";
+      if (filter === "active") return !project.deletedAt && project.status !== "archived";
+      return true;
+    })
+    .filter((project) => {
+      if (!query) return true;
+      return `${project.projectName} ${project.customer?.name || ""}`.toLowerCase().includes(query);
+    })
+    .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+
+  elements.projectList.innerHTML = projects.length
+    ? projects
+        .map((project) => {
+          const pieceCount = (project.parts || []).reduce(
+            (sum, part) => sum + Math.max(0, Number(part.quantity) || 0),
+            0,
+          );
+          const isTrash = Boolean(project.deletedAt);
+          return `
+            <article class="project-row ${project.id === state.id ? "is-active" : ""}" data-project-id="${escapeHtml(project.id)}">
+              <div class="project-row-main">
+                <strong>${escapeHtml(project.projectName)}</strong>
+                <span>${escapeHtml(project.customer?.name || "未填写客户")} · ${project.parts?.length || 0} 种 / ${pieceCount} 片</span>
+              </div>
+              <div class="project-row-meta">
+                <b class="project-status-pill">${isTrash ? "回收站" : formatProjectStatus(project.status)}</b>
+                <span>更新 ${formatDateTime(project.updatedAt)}</span>
+              </div>
+              <div class="project-row-meta">
+                <span>报价版本 ${project.quoteVersions?.length || 0}</span>
+                <span>历史版本 ${project.snapshots?.length || 0}</span>
+              </div>
+              <div class="project-row-actions">
+                ${isTrash
+                  ? `<button class="mini-action" data-project-action="restore" type="button">恢复</button>`
+                  : `
+                    <button class="mini-action" data-project-action="open" type="button">打开</button>
+                    <button class="mini-action" data-project-action="duplicate" type="button">复制</button>
+                    <button class="mini-action" data-project-action="archive" type="button">${project.status === "archived" ? "取消归档" : "归档"}</button>
+                    <button class="mini-action danger" data-project-action="trash" type="button">删除</button>
+                  `}
+              </div>
+            </article>`;
+        })
+        .join("")
+    : '<div class="empty-panel">没有符合条件的项目</div>';
+}
+
+function renderHistory() {
+  if (!elements.historyList) return;
+  const snapshots = state.snapshots || [];
+  elements.historyList.innerHTML = snapshots.length
+    ? snapshots
+        .map(
+          (snapshot) => `
+            <div class="history-row" data-snapshot-id="${escapeHtml(snapshot.id)}">
+              <div><strong>${escapeHtml(snapshot.reason)}</strong><span>${formatDateTime(snapshot.createdAt)} · ${snapshot.data?.parts?.length || 0} 种板件</span></div>
+              <button class="mini-action" data-history-action="restore" type="button">恢复此版本</button>
+            </div>`,
+        )
+        .join("")
+    : '<div class="empty-panel">当前项目还没有历史版本</div>';
+}
+
+function createNewProject() {
+  saveState({ immediate: true });
+  const initial = createInitialState();
+  initial.parts = [];
+  initial.projectName = `新项目 ${workspace.projects.filter((project) => !project.deletedAt).length + 1}`;
+  const project = createProjectRecord(initial);
+  workspace.projects.unshift(project);
+  workspace.activeProjectId = project.id;
+  persistWorkspace(workspace);
+  state = hydrateProject(project);
+  selectedPartIds.clear();
+  lastResult = null;
+  lastQuotation = null;
+  renderAll();
+  renderProjectList();
+  elements.projectCenterDialog.close();
+  showToast("已创建新项目");
+}
+
+function handleProjectAction(projectId, action) {
+  const project = workspace.projects.find((item) => item.id === projectId);
+  if (!project) return;
+  if (action === "open") {
+    switchProject(projectId);
+    elements.projectCenterDialog.close();
+    return;
+  }
+  if (action === "duplicate") {
+    const copy = duplicateProject(workspace, projectId);
+    persistWorkspace(workspace);
+    if (copy) switchProject(copy.id);
+    renderProjectList();
+    elements.projectCenterDialog.close();
+    showToast("项目副本已创建");
+    return;
+  }
+  if (action === "archive") {
+    project.status = project.status === "archived" ? "draft" : "archived";
+  } else if (action === "trash") {
+    project.deletedAt = new Date().toISOString();
+    if (project.id === state.id) {
+      let next = workspace.projects.find((item) => !item.deletedAt && item.id !== project.id);
+      if (!next) {
+        next = createProjectRecord({ ...createInitialState(), parts: [] });
+        workspace.projects.unshift(next);
+      }
+      workspace.activeProjectId = next.id;
+      state = hydrateProject(next);
+      renderAll();
+    }
+  } else if (action === "restore") {
+    project.deletedAt = null;
+    project.status = "draft";
+  }
+  project.updatedAt = new Date().toISOString();
+  persistWorkspace(workspace);
+  renderProjectList();
 }
 
 function formatPercent(value) {
@@ -806,6 +1017,136 @@ function renderSheetCards(result, material = "") {
     .join("");
 }
 
+function money(value) {
+  return `¥${Number(value || 0).toLocaleString("zh-CN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+function effectivePriceBook() {
+  const book = normalizePriceBook(workspace.priceBook);
+  return {
+    ...book,
+    materialPrices: {
+      ...book.materialPrices,
+      ...(state.pricing?.materialPrices || {}),
+    },
+  };
+}
+
+function renderPriceBook() {
+  const book = normalizePriceBook(workspace.priceBook);
+  document.querySelectorAll("[data-price-book]").forEach((input) => {
+    input.value = book[input.dataset.priceBook];
+  });
+}
+
+function renderMaterialPrices(result = lastResult) {
+  if (!result) return;
+  const book = effectivePriceBook();
+  elements.materialPriceList.innerHTML = result.materialSummaries
+    .map((material) => {
+      const price = book.materialPrices[material.material] || { cost: 0, sale: 0 };
+      return `
+        <div class="material-price-row" data-material-price="${escapeHtml(material.material)}">
+          <div><strong>${escapeHtml(material.material)}</strong><small>${material.sheetCount} 张整板 · ${material.partCount} 片</small></div>
+          <label><span>进价 / 张</span><input data-price-field="cost" type="number" min="0" step="0.01" value="${Number(price.cost || 0)}" /></label>
+          <label><span>售价 / 张</span><input data-price-field="sale" type="number" min="0" step="0.01" value="${Number(price.sale || 0)}" /></label>
+          <b>${money(material.sheetCount * Number(price.sale || 0))}</b>
+        </div>`;
+    })
+    .join("");
+}
+
+function updateQuotation() {
+  if (!lastResult) return;
+  state.pricing = {
+    discount: Math.max(0, parseNumericValue(elements.quoteDiscount.value, 0)),
+    leftoverOwnership: elements.leftoverOwnership.value,
+    note: elements.quoteNote.value.trim(),
+    materialPrices: state.pricing?.materialPrices || {},
+  };
+  lastQuotation = calculateQuotation(lastResult, effectivePriceBook(), state.pricing);
+  const totals = lastQuotation.totals;
+  elements.quoteSummary.innerHTML = `
+    <h3>本单报价汇总</h3>
+    <div class="quote-summary-lines">
+      ${lastQuotation.lines.map((line) => `<div class="quote-summary-line"><span>${escapeHtml(line.name)} · ${line.quantity} ${line.unit}</span><strong>${money(line.saleAmount)}</strong></div>`).join("")}
+      ${lastQuotation.discount ? `<div class="quote-summary-line"><span>订单优惠</span><strong>-${money(lastQuotation.discount)}</strong></div>` : ""}
+      ${lastQuotation.tax ? `<div class="quote-summary-line"><span>税费 ${lastQuotation.taxRate}%</span><strong>${money(lastQuotation.tax)}</strong></div>` : ""}
+    </div>
+    <div class="quote-margin">
+      <div><span>内部成本</span><strong>${money(totals.costTotal)}</strong></div>
+      <div><span>预计毛利</span><strong>${money(totals.grossProfit)}</strong></div>
+      <div><span>毛利率</span><strong>${totals.grossMargin.toFixed(1)}%</strong></div>
+      <div><span>余料归属</span><strong>${lastQuotation.leftoverOwnership === "customer" ? "客户" : lastQuotation.leftoverOwnership === "factory" ? "加工厂" : "折价返还"}</strong></div>
+    </div>
+    <div class="quote-summary-total"><span>客户应付</span><strong>${money(totals.saleTotal)}</strong></div>
+  `;
+  saveState();
+}
+
+function renderQuoteVersions() {
+  const versions = state.quoteVersions || [];
+  elements.quoteVersionList.innerHTML = versions.length
+    ? versions
+        .map(
+          (quote) =>
+            `<span class="quote-version-chip">${escapeHtml(quote.number)} · ${money(quote.quotation?.totals?.saleTotal)} · ${formatDateTime(quote.createdAt)}</span>`,
+        )
+        .join("")
+    : "<span>尚未保存正式报价版本</span>";
+}
+
+function renderQuotation(result) {
+  elements.quotationSection.hidden = false;
+  elements.quoteDiscount.value = state.pricing?.discount || 0;
+  elements.leftoverOwnership.value = state.pricing?.leftoverOwnership || "customer";
+  elements.quoteNote.value = state.pricing?.note || "";
+  renderMaterialPrices(result);
+  renderQuoteVersions();
+  updateQuotation();
+}
+
+function saveQuoteVersion() {
+  if (!lastResult || !lastQuotation) {
+    showToast("请先完成排版并核对报价");
+    return;
+  }
+  const quote = createQuoteVersion(state, lastResult, lastQuotation);
+  state.quoteVersions = [quote, ...(state.quoteVersions || [])];
+  state.status = "quoted";
+  elements.projectStatus.value = state.status;
+  saveSnapshot(`保存报价 ${quote.number}`);
+  renderQuoteVersions();
+  showToast(`已保存报价版本 ${quote.number}`);
+}
+
+function createCustomerQuoteDocument() {
+  const quotation = lastQuotation;
+  const validUntil = new Date();
+  validUntil.setDate(validUntil.getDate() + 7);
+  const rows = quotation.lines
+    .map(
+      (line) => `<tr><td>${escapeHtml(line.category)}</td><td>${escapeHtml(line.name)}</td><td>${line.quantity} ${line.unit}</td><td>${money(line.saleUnitPrice)}</td><td>${money(line.saleAmount)}</td></tr>`,
+    )
+    .join("");
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><title>${escapeHtml(state.projectName)}报价单</title><style>
+    @page{size:A4;margin:14mm}*{box-sizing:border-box}body{margin:0;color:#17231d;font:12px -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif}
+    header{display:flex;justify-content:space-between;gap:24px;padding-bottom:16px;border-bottom:3px solid #17291f}h1{margin:0;font-size:25px}p{margin:6px 0 0;color:#6b776f}.meta{text-align:right;line-height:1.8}
+    .customer{margin:18px 0;padding:13px;display:grid;grid-template-columns:repeat(3,1fr);gap:12px;background:#f4f7f3;border-radius:8px}.customer span{display:block;color:#768279;font-size:9px}.customer strong{display:block;margin-top:4px}
+    table{width:100%;border-collapse:collapse}th,td{padding:9px;border-bottom:1px solid #dce3dc;text-align:left}th{background:#f2f5f2;color:#58665d;font-size:10px}td:last-child,th:last-child{text-align:right}
+    .total{margin-left:auto;margin-top:18px;width:300px;display:grid;gap:8px}.total div{display:flex;justify-content:space-between}.total .grand{padding-top:12px;border-top:2px solid #17291f;font-size:18px;font-weight:800}.note{margin-top:28px;padding:14px;border:1px solid #dce3dc;border-radius:8px;line-height:1.8}
+  </style></head><body>
+    <header><div><h1>柜体板开料报价单</h1><p>${escapeHtml(state.projectName)}</p></div><div class="meta">报价日期：${new Date().toLocaleDateString("zh-CN")}<br>有效期至：${validUntil.toLocaleDateString("zh-CN")}</div></header>
+    <section class="customer"><div><span>客户名称</span><strong>${escapeHtml(state.customer?.name || "—")}</strong></div><div><span>联系电话</span><strong>${escapeHtml(state.customer?.phone || "—")}</strong></div><div><span>预计交付</span><strong>${escapeHtml(state.deliveryDate || "待确认")}</strong></div></section>
+    <table><thead><tr><th>分类</th><th>项目</th><th>数量</th><th>单价</th><th>金额</th></tr></thead><tbody>${rows}</tbody></table>
+    <section class="total"><div><span>费用小计</span><strong>${money(quotation.totals.saleSubtotal)}</strong></div>${quotation.discount ? `<div><span>优惠</span><strong>-${money(quotation.discount)}</strong></div>` : ""}${quotation.totals.tax ? `<div><span>税费</span><strong>${money(quotation.totals.tax)}</strong></div>` : ""}<div class="grand"><span>合计</span><strong>${money(quotation.totals.saleTotal)}</strong></div></section>
+    <section class="note">余料归属：${quotation.leftoverOwnership === "customer" ? "余料归客户" : quotation.leftoverOwnership === "factory" ? "余料归加工厂" : "余料折价返还"}<br>${escapeHtml(state.pricing?.note || "本报价根据当前确认的板件清单及排版结果生成，清单变更后需重新报价。")}</section>
+  </body></html>`;
+}
+
 function createPrintDocument(result) {
   const totals = result.totals;
   const sheetGroups = groupSheetsByLayout(result.sheets);
@@ -877,7 +1218,7 @@ function createPrintDocument(result) {
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <title>${escapeHtml(state.projectName || "开料项目")} - 打印结果</title>
+  <title>${escapeHtml(state.projectName || "开料项目")} - 内部生产单</title>
   <style>
     @page { size: A4; margin: 10mm; }
     * { box-sizing: border-box; }
@@ -916,7 +1257,7 @@ function createPrintDocument(result) {
     <header class="report-head">
       <div>
         <h1>${escapeHtml(state.projectName || "开料项目")}</h1>
-        <p>柜体板开料计算结果</p>
+        <p>内部生产单 · 客户：${escapeHtml(state.customer?.name || "未填写")} · 交付：${escapeHtml(state.deliveryDate || "待确认")}</p>
       </div>
       <div class="report-meta">
         <div>打印时间：${printedAt}</div>
@@ -945,21 +1286,25 @@ function createPrintDocument(result) {
 </html>`;
 }
 
-function printResult() {
-  if (!lastResult) {
-    showToast("请先完成排版计算");
-    return;
-  }
+function openPrintDocument(content) {
   const printWindow = window.open("", "_blank");
   if (!printWindow) {
     showToast("浏览器拦截了打印窗口，请允许弹窗后重试");
     return;
   }
   printWindow.document.open();
-  printWindow.document.write(createPrintDocument(lastResult));
+  printWindow.document.write(content);
   printWindow.document.close();
   printWindow.focus();
   setTimeout(() => printWindow.print(), 250);
+}
+
+function printResult() {
+  if (!lastResult) {
+    showToast("请先完成排版计算");
+    return;
+  }
+  openPrintDocument(createPrintDocument(lastResult));
 }
 
 function renderResults(result) {
@@ -1037,6 +1382,7 @@ function renderResults(result) {
     <div><span>余料口径</span><strong>${totals.leftoverCount} 块 · ${formatArea(totals.leftoverArea)}</strong><small>按每种颜色设置的最小短边过滤，锯缝与修边不计入可回收余料。</small></div>
     <div><span>封边公式</span><strong>${edgeFormula}</strong><small>板件与余料封边合并计损耗；${result.settings.roundEdgeBand ? "不同颜色分别按整米向上取整，再汇总领料。" : "不同颜色分别保留两位小数，再汇总领料。"}</small></div>
   `;
+  renderQuotation(result);
 }
 
 function runOptimizationInWorker(parts, settings) {
@@ -1045,7 +1391,7 @@ function runOptimizationInWorker(parts, settings) {
   }
 
   calculationWorker?.terminate();
-  calculationWorker = new Worker("./optimizer-worker.js?v=20260729-5", { type: "module" });
+  calculationWorker = new Worker("./optimizer-worker.js?v=20260730-1", { type: "module" });
   const requestId = makeId();
 
   return new Promise((resolve, reject) => {
@@ -1098,7 +1444,10 @@ async function calculate() {
       ...state.settings,
       materialRules: state.materialRules,
     });
+    state.status = "calculated";
+    elements.projectStatus.value = state.status;
     renderResults(result);
+    saveSnapshot("排版计算完成");
     elements.calculateButton.querySelector("span").textContent = "重新排版计算";
     document.getElementById("results").scrollIntoView({ behavior: "smooth", block: "start" });
     showToast(`计算完成：${result.totals.sheetCount} 张板，封边 ${result.totals.edgeBandOrderMeters} 米`);
@@ -1222,8 +1571,11 @@ async function importProject(file) {
   try {
     const stored = JSON.parse(await file.text());
     if (!stored || !Array.isArray(stored.parts)) throw new Error("invalid");
-    state = {
-      version: 2,
+    const imported = createProjectRecord({
+      ...createInitialState(),
+      ...stored,
+      id: makeId(),
+      version: 3,
       projectName: String(stored.projectName || file.name.replace(/\.json$/i, "")),
       settings: normalizeSettings(stored.settings),
       materialRules: normalizeMaterialRules(
@@ -1231,7 +1583,12 @@ async function importProject(file) {
       ),
       parts: stored.parts.map((part) => newPart(part)),
       updatedAt: new Date().toISOString(),
-    };
+      snapshots: [],
+      quoteVersions: stored.quoteVersions || [],
+    });
+    workspace.projects.unshift(imported);
+    workspace.activeProjectId = imported.id;
+    state = hydrateProject(imported);
     selectedPartIds.clear();
     renderAll();
     saveState({ immediate: true });
@@ -1243,10 +1600,45 @@ async function importProject(file) {
   }
 }
 
+function exportAllData() {
+  saveState({ immediate: true });
+  downloadFile(
+    `开料助手全部数据-${new Date().toISOString().slice(0, 10)}.json`,
+    exportWorkspace(workspace),
+    "application/json;charset=utf-8",
+  );
+  showToast("全部项目与价格档案已备份");
+}
+
+async function importAllData(file) {
+  try {
+    const imported = importWorkspace(await file.text());
+    if (!window.confirm(`将恢复 ${imported.projects.length} 个项目并覆盖当前本地数据，是否继续？`)) return;
+    workspace = imported;
+    persistWorkspace(workspace);
+    state = hydrateProject(getActiveProject(workspace) || workspace.projects[0]);
+    selectedPartIds.clear();
+    renderAll();
+    renderProjectList();
+    showToast("全部项目与价格档案已恢复");
+  } catch {
+    showToast("恢复失败：备份文件格式不正确");
+  } finally {
+    elements.workspaceFile.value = "";
+  }
+}
+
 function renderAll() {
   elements.projectName.value = state.projectName;
+  elements.customerName.value = state.customer?.name || "";
+  elements.customerPhone.value = state.customer?.phone || "";
+  elements.deliveryDate.value = state.deliveryDate || "";
+  elements.projectStatus.value = state.status || "draft";
   renderSettings();
   renderParts();
+  renderHistory();
+  renderQuoteVersions();
+  renderPriceBook();
   resetResults();
 }
 
@@ -1266,7 +1658,7 @@ document.getElementById("sample-button").addEventListener("click", () => {
   renderSettings();
   renderParts();
   resetResults();
-  saveState({ immediate: true });
+  saveSnapshot("载入示例数据");
   showToast("已载入 1 张标准板的示例数据");
 });
 
@@ -1351,6 +1743,22 @@ elements.projectName.addEventListener("input", () => {
   resetResults();
   saveState();
 });
+elements.customerName.addEventListener("input", () => {
+  state.customer = { ...state.customer, name: elements.customerName.value.trimStart() };
+  saveState();
+});
+elements.customerPhone.addEventListener("input", () => {
+  state.customer = { ...state.customer, phone: elements.customerPhone.value.trimStart() };
+  saveState();
+});
+elements.deliveryDate.addEventListener("change", () => {
+  state.deliveryDate = elements.deliveryDate.value;
+  saveState();
+});
+elements.projectStatus.addEventListener("change", () => {
+  state.status = elements.projectStatus.value;
+  saveState({ immediate: true });
+});
 
 elements.calculateButton.addEventListener("click", calculate);
 elements.applyEdgeButton.addEventListener("click", applyBatchEdgePreset);
@@ -1374,5 +1782,116 @@ elements.importFile.addEventListener("change", () => {
 });
 document.getElementById("csv-button").addEventListener("click", exportCsv);
 document.getElementById("print-button").addEventListener("click", printResult);
+
+document.getElementById("project-center-button").addEventListener("click", () => {
+  saveState({ immediate: true });
+  renderProjectList();
+  elements.projectCenterDialog.showModal();
+});
+document.getElementById("price-book-button").addEventListener("click", () => {
+  renderPriceBook();
+  elements.priceBookDialog.showModal();
+});
+document.getElementById("history-button").addEventListener("click", () => {
+  renderHistory();
+  elements.historyDialog.showModal();
+});
+document.querySelectorAll("[data-close-dialog]").forEach((button) => {
+  button.addEventListener("click", () => {
+    document.getElementById(button.dataset.closeDialog)?.close();
+  });
+});
+document.getElementById("new-project-button").addEventListener("click", createNewProject);
+elements.projectSearch.addEventListener("input", renderProjectList);
+elements.projectFilter.addEventListener("change", renderProjectList);
+elements.projectList.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-project-action]");
+  const row = button?.closest("[data-project-id]");
+  if (button && row) handleProjectAction(row.dataset.projectId, button.dataset.projectAction);
+});
+document.getElementById("manual-snapshot-button").addEventListener("click", () => {
+  saveSnapshot("手动保存");
+  showToast("当前项目版本已保存");
+});
+elements.historyList.addEventListener("click", (event) => {
+  const button = event.target.closest('[data-history-action="restore"]');
+  const row = button?.closest("[data-snapshot-id]");
+  if (!button || !row) return;
+  if (!window.confirm("恢复后将替换当前板件与设置，是否继续？")) return;
+  saveSnapshot("恢复历史版本前");
+  state = hydrateProject(restoreSnapshot(state, row.dataset.snapshotId));
+  state = upsertProject(workspace, state);
+  persistWorkspace(workspace);
+  selectedPartIds.clear();
+  renderAll();
+  elements.historyDialog.close();
+  showToast("历史版本已恢复");
+});
+document.getElementById("export-workspace-button").addEventListener("click", exportAllData);
+document.getElementById("import-workspace-button").addEventListener("click", () => {
+  elements.workspaceFile.click();
+});
+elements.workspaceFile.addEventListener("change", () => {
+  if (elements.workspaceFile.files?.[0]) importAllData(elements.workspaceFile.files[0]);
+});
+document.getElementById("save-price-book-button").addEventListener("click", () => {
+  const values = {};
+  document.querySelectorAll("[data-price-book]").forEach((input) => {
+    values[input.dataset.priceBook] = parseNumericValue(input.value, 0);
+  });
+  workspace.priceBook = normalizePriceBook({
+    ...workspace.priceBook,
+    ...values,
+  });
+  persistWorkspace(workspace);
+  elements.priceBookDialog.close();
+  if (lastResult) {
+    renderMaterialPrices(lastResult);
+    updateQuotation();
+  }
+  showToast("默认价格已保存");
+});
+elements.materialPriceList.addEventListener("input", (event) => {
+  const input = event.target.closest("[data-price-field]");
+  const row = input?.closest("[data-material-price]");
+  if (!input || !row) return;
+  const material = row.dataset.materialPrice;
+  const current = state.pricing?.materialPrices?.[material] || {};
+  state.pricing = {
+    ...state.pricing,
+    materialPrices: {
+      ...(state.pricing?.materialPrices || {}),
+      [material]: {
+        ...current,
+        [input.dataset.priceField]: Math.max(0, parseNumericValue(input.value, 0)),
+      },
+    },
+  };
+  const price = state.pricing.materialPrices[material];
+  const sheetCount = lastResult?.materialSummaries?.find(
+    (item) => item.material === material,
+  )?.sheetCount || 0;
+  row.querySelector("b").textContent = money(sheetCount * Number(price.sale || 0));
+  updateQuotation();
+});
+[elements.quoteDiscount, elements.quoteNote].forEach((input) => {
+  input.addEventListener("input", updateQuotation);
+});
+elements.leftoverOwnership.addEventListener("change", updateQuotation);
+document.getElementById("save-quote-button").addEventListener("click", saveQuoteVersion);
+document.getElementById("customer-quote-button").addEventListener("click", () => {
+  if (!lastQuotation) {
+    showToast("请先完成排版并生成报价");
+    return;
+  }
+  openPrintDocument(createCustomerQuoteDocument());
+});
+document.getElementById("production-order-button").addEventListener("click", () => {
+  if (!lastResult) {
+    showToast("请先完成排版计算");
+    return;
+  }
+  openPrintDocument(createPrintDocument(lastResult));
+});
 
 renderAll();
