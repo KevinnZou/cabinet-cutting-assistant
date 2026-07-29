@@ -9,7 +9,7 @@
     />
     <meta name="theme-color" content="#14271e" />
     <title>开料工作台｜柜体板开料计算助手</title>
-    <link rel="stylesheet" href="./app.css?v=20260729-5" />
+    <link rel="stylesheet" href="./app.css?v=20260730-1" />
   </head>
   <body>
     <header class="topbar">
@@ -19,6 +19,8 @@
       </a>
       <div class="topbar-actions">
         <span class="local-badge"><i></i> 数据仅保存在本机</span>
+        <button class="quiet-button" id="project-center-button" type="button">项目中心</button>
+        <button class="quiet-button" id="price-book-button" type="button">价格档案</button>
         <a class="quiet-link" href="../intro/">产品介绍</a>
       </div>
     </header>
@@ -36,11 +38,28 @@
             <input id="project-name" type="text" maxlength="50" value="新建柜体项目" />
           </label>
           <div class="file-actions">
+            <button class="button subtle" id="history-button" type="button">版本历史</button>
             <button class="button subtle" id="import-button" type="button">导入项目</button>
             <button class="button subtle" id="export-button" type="button">导出项目</button>
             <input id="import-file" type="file" accept="application/json,.json" hidden />
           </div>
           <span class="save-status" id="save-status">已保存到本机</span>
+        </div>
+        <div class="project-meta">
+          <label><span>客户名称</span><input id="customer-name" type="text" maxlength="50" placeholder="选填" /></label>
+          <label><span>联系电话</span><input id="customer-phone" type="text" maxlength="30" placeholder="选填" /></label>
+          <label><span>交付日期</span><input id="delivery-date" type="date" /></label>
+          <label><span>项目状态</span>
+            <select id="project-status">
+              <option value="draft">草稿</option>
+              <option value="review">待复核</option>
+              <option value="calculated">已排版</option>
+              <option value="quoted">已报价</option>
+              <option value="production">待生产</option>
+              <option value="completed">已完成</option>
+              <option value="archived">已归档</option>
+            </select>
+          </label>
         </div>
       </section>
 
@@ -276,6 +295,47 @@
           <div class="calculation-notes" id="calculation-notes"></div>
         </div>
       </section>
+
+      <section class="quotation-section" id="quotation-section" hidden aria-labelledby="quotation-title">
+        <div class="quotation-head">
+          <div class="card-heading">
+            <span class="step-number">05</span>
+            <div><h2 id="quotation-title">成本核算与报价</h2><p>报价绑定当前排版结果，保存后不会被后续修改覆盖</p></div>
+          </div>
+          <div class="result-actions">
+            <button class="button subtle" id="save-quote-button" type="button">保存报价版本</button>
+            <button class="button subtle" id="customer-quote-button" type="button">客户报价单</button>
+            <button class="button dark" id="production-order-button" type="button">内部生产单</button>
+          </div>
+        </div>
+        <div class="quotation-body">
+          <div class="quotation-config">
+            <div class="quote-block">
+              <div class="quote-block-head"><strong>板材价格</strong><span>按本次排版颜色计价</span></div>
+              <div class="material-price-list" id="material-price-list"></div>
+            </div>
+            <div class="quote-block">
+              <div class="quote-block-head"><strong>订单调整</strong><span>只影响当前项目</span></div>
+              <div class="quote-options-grid">
+                <label><span>优惠金额 <em>元</em></span><input id="quote-discount" type="number" min="0" step="0.01" value="0" /></label>
+                <label><span>余料归属</span>
+                  <select id="leftover-ownership">
+                    <option value="customer">余料归客户</option>
+                    <option value="factory">余料归加工厂</option>
+                    <option value="discount">余料折价返还</option>
+                  </select>
+                </label>
+                <label class="quote-note-field"><span>报价备注</span><input id="quote-note" type="text" maxlength="100" placeholder="付款、交付或其他说明" /></label>
+              </div>
+            </div>
+          </div>
+          <aside class="quote-summary" id="quote-summary"></aside>
+        </div>
+        <div class="quote-version-bar">
+          <strong>已保存报价</strong>
+          <div id="quote-version-list"><span>尚未保存正式报价版本</span></div>
+        </div>
+      </section>
     </main>
 
     <footer class="footer">
@@ -285,6 +345,68 @@
     </footer>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="./app.js?v=20260729-5"></script>
+
+    <dialog class="app-dialog project-center-dialog" id="project-center-dialog">
+      <div class="dialog-head">
+        <div><span class="panel-kicker">LOCAL PROJECTS</span><h2>项目中心</h2><p>项目、报价和历史版本都保存在当前浏览器</p></div>
+        <button class="dialog-close" type="button" data-close-dialog="project-center-dialog" aria-label="关闭">×</button>
+      </div>
+      <div class="project-center-toolbar">
+        <button class="button primary" id="new-project-button" type="button"><span>新建项目</span><b>＋</b></button>
+        <input id="project-search" type="search" placeholder="搜索项目或客户" />
+        <select id="project-filter">
+          <option value="active">全部进行中</option>
+          <option value="archived">已归档</option>
+          <option value="trash">回收站</option>
+          <option value="all">全部项目</option>
+        </select>
+      </div>
+      <div class="project-list" id="project-list"></div>
+      <div class="dialog-footer split">
+        <div>
+          <button class="button subtle" id="export-workspace-button" type="button">备份全部数据</button>
+          <button class="button subtle" id="import-workspace-button" type="button">恢复全部数据</button>
+          <input id="workspace-file" type="file" accept="application/json,.json" hidden />
+        </div>
+        <small>建议定期备份；清理浏览器数据可能导致本机项目丢失。</small>
+      </div>
+    </dialog>
+
+    <dialog class="app-dialog history-dialog" id="history-dialog">
+      <div class="dialog-head">
+        <div><span class="panel-kicker">VERSION HISTORY</span><h2>版本历史</h2><p>最多保留最近20个关键节点</p></div>
+        <button class="dialog-close" type="button" data-close-dialog="history-dialog" aria-label="关闭">×</button>
+      </div>
+      <div class="history-actions">
+        <button class="button dark" id="manual-snapshot-button" type="button">保存当前版本</button>
+        <span>恢复版本前，系统会先保存当前状态。</span>
+      </div>
+      <div class="history-list" id="history-list"></div>
+    </dialog>
+
+    <dialog class="app-dialog price-book-dialog" id="price-book-dialog">
+      <div class="dialog-head">
+        <div><span class="panel-kicker">PRICE BOOK</span><h2>价格档案</h2><p>作为新报价的默认价格，可在单个项目中继续调整</p></div>
+        <button class="dialog-close" type="button" data-close-dialog="price-book-dialog" aria-label="关闭">×</button>
+      </div>
+      <div class="price-book-grid">
+        <label><span>封边条进价 <em>元/米</em></span><input data-price-book="edgeTapeCostPerMeter" type="number" min="0" step="0.01" /></label>
+        <label><span>封边条售价 <em>元/米</em></span><input data-price-book="edgeTapeSalePerMeter" type="number" min="0" step="0.01" /></label>
+        <label><span>开料成本 <em>元/张</em></span><input data-price-book="cuttingCostPerSheet" type="number" min="0" step="0.01" /></label>
+        <label><span>开料收费 <em>元/张</em></span><input data-price-book="cuttingSalePerSheet" type="number" min="0" step="0.01" /></label>
+        <label><span>封边加工成本 <em>元/米</em></span><input data-price-book="edgeProcessCostPerMeter" type="number" min="0" step="0.01" /></label>
+        <label><span>封边加工收费 <em>元/米</em></span><input data-price-book="edgeProcessSalePerMeter" type="number" min="0" step="0.01" /></label>
+        <label><span>配送成本 <em>元</em></span><input data-price-book="deliveryCost" type="number" min="0" step="0.01" /></label>
+        <label><span>配送收费 <em>元</em></span><input data-price-book="deliverySale" type="number" min="0" step="0.01" /></label>
+        <label><span>其他成本 <em>元</em></span><input data-price-book="otherCost" type="number" min="0" step="0.01" /></label>
+        <label><span>其他收费 <em>元</em></span><input data-price-book="otherSale" type="number" min="0" step="0.01" /></label>
+        <label><span>税率 <em>%</em></span><input data-price-book="taxRate" type="number" min="0" max="100" step="0.1" /></label>
+      </div>
+      <div class="dialog-footer">
+        <button class="button primary wide" id="save-price-book-button" type="button"><span>保存默认价格</span><b>→</b></button>
+      </div>
+    </dialog>
+
+    <script type="module" src="./app.js?v=20260730-1"></script>
   </body>
 </html>
