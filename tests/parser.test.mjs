@@ -27,6 +27,28 @@ test("解析混合自然语言清单为可确认板件", () => {
   assert.equal(result.parts[2].edgeShort, 2);
 });
 
+test("解析结果记录原文行号以及明确、继承、推断和待确认来源", () => {
+  const result = parsePartsText(`
+皓月白
+以下都四边
+门板 398x690=16 木纹
+460x2440
+`);
+  const [door, unnamed] = result.parts;
+
+  assert.equal(door.sourceLine, 4);
+  assert.equal(door.provenance.sourceText, "门板 398x690=16 木纹");
+  assert.equal(door.provenance.fields.material.kind, "inherited");
+  assert.equal(door.provenance.fields.material.sourceLine, 2);
+  assert.equal(door.provenance.fields.edges.kind, "inherited");
+  assert.equal(door.provenance.fields.edges.sourceLine, 3);
+  assert.equal(door.provenance.fields.quantity.kind, "explicit");
+  assert.equal(unnamed.provenance.fields.name.kind, "inferred");
+  assert.equal(unnamed.provenance.fields.quantity.kind, "default");
+  assert.ok(result.stats.provenance.inherited >= 2);
+  assert.ok(result.stats.provenance.default >= 1);
+});
+
 test("支持表格粘贴和单位换算", () => {
   const result = parsePartsText(`
 名称 尺寸 数量 材质
