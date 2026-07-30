@@ -9,7 +9,7 @@
     />
     <meta name="theme-color" content="#14271e" />
     <title>开料工作台｜柜体板开料计算助手</title>
-    <link rel="stylesheet" href="./app.css?v=20260730-1" />
+    <link rel="stylesheet" href="./app.css?v=20260730-2" />
   </head>
   <body>
     <header class="topbar">
@@ -268,6 +268,7 @@
             <div><h2 id="results-title">计算结果</h2><p id="result-caption">结果仅在当前设备生成</p></div>
           </div>
           <div class="result-actions" id="result-actions" hidden>
+            <button class="button dark" id="lock-production-button" type="button">锁定生产版本</button>
             <button class="button subtle" id="csv-button" type="button">导出清单 CSV</button>
             <button class="button subtle" id="print-button" type="button">打印结果</button>
           </div>
@@ -281,6 +282,7 @@
 
         <div class="result-content" id="result-content" hidden>
           <div class="print-summary" id="print-summary"></div>
+          <div class="result-validity" id="result-validity" hidden></div>
           <div class="result-quality" id="result-quality"></div>
           <div class="result-stats" id="result-stats"></div>
           <div class="material-summary" id="material-summary"></div>
@@ -407,6 +409,6 @@
       </div>
     </dialog>
 
-    <script type="module" src="./app.js?v=20260730-1"></script>
+    <script type="module" src="./app.js?v=20260730-2"></script>
   </body>
 </html>
