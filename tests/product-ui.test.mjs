@@ -73,3 +73,34 @@ test("报价工作台支持价格档案、余料归属和两类专用单据", as
   assert.match(script, /createQuoteVersion\(state, lastResult, lastQuotation\)/);
   assert.match(script, /createCustomerQuoteDocument\(\)/);
 });
+
+test("旧排版结果失效后禁止报价生产并显示变更摘要", async () => {
+  const [html, script] = await Promise.all([
+    readFile(new URL("../public/app/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../public/app/app.js", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(html, /id="result-validity"/);
+  assert.match(html, /id="lock-production-button"/);
+  assert.match(script, /invalidateCalculation\(/);
+  assert.match(script, /diffCalculationInputs\(/);
+  assert.match(script, /当前排版结果已过期，禁止用于报价或生产/);
+  assert.match(script, /requireCurrentResult\(/);
+});
+
+test("板件复核表支持逐行查看原文和字段判断来源", async () => {
+  const [html, script, parser] = await Promise.all([
+    readFile(new URL("../public/app/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../public/app/app.js", import.meta.url), "utf8"),
+    readFile(new URL("../public/app/parser.js", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(html, /20260730-2/);
+  assert.match(script, /data-action="toggle-source"/);
+  assert.match(script, /原文明确/);
+  assert.match(script, /上下文继承/);
+  assert.match(script, /系统推断/);
+  assert.match(script, /确认本行无误/);
+  assert.match(parser, /provenance:/);
+  assert.match(parser, /sourceLine/);
+});
