@@ -37,6 +37,19 @@ export function createProjectRecord(project, overrides = {}) {
     deletedAt: overrides.deletedAt ?? project.deletedAt ?? null,
     snapshots: clone(overrides.snapshots || project.snapshots || []),
     quoteVersions: clone(overrides.quoteVersions || project.quoteVersions || []),
+    productionVersions: clone(
+      overrides.productionVersions || project.productionVersions || [],
+    ),
+    currentProductionLockId:
+      overrides.currentProductionLockId ?? project.currentProductionLockId ?? null,
+    calculationBaseline: clone(
+      overrides.calculationBaseline ?? project.calculationBaseline ?? null,
+    ),
+    calculationState: clone(
+      overrides.calculationState || project.calculationState || {
+        status: "not-calculated",
+      },
+    ),
     pricing: clone(overrides.pricing || project.pricing || {}),
   };
 }
@@ -130,6 +143,10 @@ export function createSnapshot(project, reason, snapshotState = project) {
       materialRules: snapshotState.materialRules,
       parts: snapshotState.parts,
       pricing: snapshotState.pricing,
+      calculationBaseline: snapshotState.calculationBaseline,
+      calculationState: snapshotState.calculationState,
+      productionVersions: snapshotState.productionVersions,
+      currentProductionLockId: snapshotState.currentProductionLockId,
     }),
   };
   project.snapshots = [snapshot, ...(project.snapshots || [])].slice(
