@@ -8,6 +8,12 @@ import {
 } from "./optimizer.js";
 import { createParserExampleByType, parsePartsText } from "./parser.js";
 import {
+  createCalculationBaseline,
+  createProductionVersion,
+  diffCalculationInputs,
+  isCalculationCurrent,
+} from "./calculation-state.js";
+import {
   createProjectRecord,
   createSnapshot,
   duplicateProject,
@@ -63,6 +69,8 @@ const elements = {
   calculationNotes: document.getElementById("calculation-notes"),
   resultActions: document.getElementById("result-actions"),
   resultCaption: document.getElementById("result-caption"),
+  resultValidity: document.getElementById("result-validity"),
+  lockProductionButton: document.getElementById("lock-production-button"),
   importFile: document.getElementById("import-file"),
   batchEdgeSelect: document.getElementById("batch-edge-select"),
   applyEdgeButton: document.getElementById("apply-edge-button"),
@@ -110,6 +118,17 @@ function makeId() {
 }
 
 function newPart(overrides = {}) {
+  const manualProvenance = {
+    origin: "manual",
+    sourceLine: null,
+    sourceText: "手动录入",
+    fields: Object.fromEntries(
+      ["name", "material", "size", "quantity", "edges", "grain"].map((field) => [
+        field,
+        { kind: "confirmed", sourceLine: null, note: "人工录入" },
+      ]),
+    ),
+  };
   return {
     id: makeId(),
     name: "新板件",
@@ -121,6 +140,7 @@ function newPart(overrides = {}) {
     edgeLong: 1,
     edgeShort: 0,
     reviewFlags: [],
+    provenance: manualProvenance,
     ...overrides,
   };
 }
@@ -138,6 +158,10 @@ function createInitialState() {
     pricing: { discount: 0, leftoverOwnership: "customer", note: "" },
     snapshots: [],
     quoteVersions: [],
+    productionVersions: [],
+    currentProductionLockId: null,
+    calculationBaseline: null,
+    calculationState: { status: "not-calculated" },
     parts: createSampleParts().map((part) => ({ ...part, id: makeId() })),
     updatedAt: new Date().toISOString(),
   };
@@ -161,6 +185,12 @@ function hydrateProject(stored) {
       note: "",
       ...(project.pricing || {}),
     },
+    calculationBaseline: project.calculationBaseline || null,
+    calculationState: project.calculationState || { status: "not-calculated" },
+    productionVersions: Array.isArray(project.productionVersions)
+      ? project.productionVersions
+      : [],
+    currentProductionLockId: project.currentProductionLockId || null,
   };
 }
 
@@ -375,6 +405,84 @@ function renderBatchToolbar() {
   });
 }
 
+const PROVENANCE_FIELD_LABELS = {
+  name: "板件名",
+  material: "颜色/材质",
+  size: "尺寸",
+  quantity: "数量",
+  grain: "木纹",
+  edges: "封边",
+};
+
+const PROVENANCE_KIND_LABELS = {
+  explicit: "原文明确",
+  inherited: "上下文继承",
+  inferred: "系统推断",
+  default: "待确认",
+  confirmed: "人工确认",
+};
+
+function normalizedProvenance(part) {
+  if (part.provenance?.fields) return part.provenance;
+  return {
+    origin: "legacy",
+    sourceLine: part.sourceLine || null,
+    sourceText: part.sourceText || "历史项目数据",
+    fields: Object.fromEntries(
+      Object.keys(PROVENANCE_FIELD_LABELS).map((field) => [
+        field,
+        { kind: "confirmed", sourceLine: part.sourceLine || null, note: "历史数据" },
+      ]),
+    ),
+  };
+}
+
+function renderPartSourceDetail(part) {
+  const provenance = normalizedProvenance(part);
+  const sourceLabel = provenance.sourceLine
+    ? `原文第 ${provenance.sourceLine} 行`
+    : provenance.origin === "manual"
+      ? "手动录入"
+      : "历史项目数据";
+  return `
+    <tr class="source-detail-row" data-source-detail="${escapeHtml(part.id)}" hidden>
+      <td colspan="7">
+        <div class="source-detail">
+          <div class="source-quote">
+            <span>${sourceLabel}</span>
+            <blockquote>${escapeHtml(provenance.sourceText || "—")}</blockquote>
+          </div>
+          <div class="source-fields">
+            ${Object.entries(PROVENANCE_FIELD_LABELS)
+              .map(([field, label]) => {
+                const trace = provenance.fields[field] || { kind: "default", note: "待确认" };
+                return `
+                  <div class="source-field ${escapeHtml(trace.kind)}">
+                    <span>${label}</span>
+                    <strong>${PROVENANCE_KIND_LABELS[trace.kind] || "待确认"}</strong>
+                    <small>${escapeHtml(trace.note || "")}</small>
+                  </div>`;
+              })
+              .join("")}
+          </div>
+          ${part.reviewFlags?.length
+            ? `<div class="source-review-actions"><span>${escapeHtml(part.reviewFlags.join("；"))}</span><button class="mini-action" data-action="confirm-source" type="button">确认本行无误</button></div>`
+            : ""}
+        </div>
+      </td>
+    </tr>`;
+}
+
+function markProvenanceConfirmed(part, field) {
+  const provenance = normalizedProvenance(part);
+  provenance.fields[field] = {
+    kind: "confirmed",
+    sourceLine: provenance.sourceLine,
+    note: "已由人工修改或确认",
+  };
+  part.provenance = provenance;
+}
+
 function renderParts() {
   const analysis = analyzeParts();
   if (!state.parts.length) {
@@ -392,6 +500,7 @@ function renderParts() {
                 <div class="part-name-line">
                   <input aria-label="板件名称" data-field="name" type="text" maxlength="40" value="${escapeHtml(part.name)}" />
                   ${part.reviewFlags?.length ? `<span class="review-badge" title="${escapeHtml(part.reviewFlags.join("；"))}">待确认</span>` : ""}
+                  <button class="source-button" data-action="toggle-source" type="button" aria-label="查看 ${escapeHtml(part.name)} 的解析来源">${part.provenance?.sourceLine ? `第${part.provenance.sourceLine}行` : "来源"}</button>
                 </div>
                 <input aria-label="颜色或材质" data-field="material" type="text" maxlength="40" value="${escapeHtml(part.material)}" />
               </div>
@@ -408,6 +517,7 @@ function renderParts() {
             <td data-label="封边方式"><select class="edge-select" aria-label="封边方式" data-field="edgePreset">${edgePresetOptions(edgeValueFromPart(part))}</select></td>
             <td data-label="操作"><button class="delete-button" type="button" data-action="delete" aria-label="删除 ${escapeHtml(part.name)}">×</button></td>
           </tr>
+          ${renderPartSourceDetail(part)}
         `,
       )
       .join("");
@@ -436,6 +546,80 @@ function updateRuleSummary() {
   elements.ruleSummary.textContent = `标准板 ${settings.boardWidth} × ${settings.boardHeight} mm · 锯缝 ${settings.kerf} mm · 修边 ${settings.trim} mm`;
 }
 
+const RESULT_DEPENDENT_ACTIONS = [
+  "csv-button",
+  "print-button",
+  "save-quote-button",
+  "customer-quote-button",
+  "production-order-button",
+  "lock-production-button",
+];
+
+function isCurrentResult() {
+  return Boolean(
+    lastResult &&
+    state.calculationBaseline?.signature &&
+    lastResult.inputSignature === state.calculationBaseline.signature &&
+    isCalculationCurrent(state, state.calculationBaseline),
+  );
+}
+
+function setResultDependentControls(enabled) {
+  RESULT_DEPENDENT_ACTIONS.forEach((id) => {
+    const control = document.getElementById(id);
+    if (control) control.disabled = !enabled;
+  });
+  elements.quotationSection
+    ?.querySelectorAll("input, select")
+    .forEach((control) => {
+      control.disabled = !enabled;
+    });
+  elements.quotationSection?.classList.toggle("is-stale", !enabled);
+}
+
+function renderResultValidity() {
+  if (!lastResult || !elements.resultValidity) {
+    if (elements.resultValidity) elements.resultValidity.hidden = true;
+    return;
+  }
+
+  const current = isCurrentResult();
+  elements.resultValidity.hidden = false;
+  setResultDependentControls(current);
+  if (current) {
+    const lockedVersion = (state.productionVersions || []).find(
+      (version) =>
+        version.id === state.currentProductionLockId &&
+        version.signature === state.calculationBaseline?.signature,
+    );
+    elements.resultValidity.className = `result-validity ${lockedVersion ? "is-locked" : "is-current"}`;
+    elements.resultValidity.innerHTML = lockedVersion
+      ? `<i>✓</i><div><strong>生产版本已锁定</strong><span>${escapeHtml(lockedVersion.number)} · ${formatDateTime(lockedVersion.lockedAt)}，当前清单与锁定版本一致。</span></div>`
+      : `<i>✓</i><div><strong>当前排版结果有效</strong><span>清单和加工规则与本次计算一致，可继续报价、打印或锁定生产版本。</span></div>`;
+    elements.lockProductionButton.disabled = Boolean(lockedVersion);
+    elements.lockProductionButton.textContent = lockedVersion ? `${lockedVersion.number} 已锁定` : "锁定生产版本";
+    return;
+  }
+
+  const diff = diffCalculationInputs(state.calculationBaseline?.input, state);
+  const reason = state.calculationState?.reason || "清单或加工规则已修改";
+  const lockedVersion = (state.productionVersions || []).find(
+    (version) => version.id === state.currentProductionLockId,
+  );
+  elements.resultValidity.className = "result-validity is-stale";
+  elements.resultValidity.innerHTML = `
+    <i>!</i>
+    <div>
+      <strong>当前排版结果已过期，禁止用于报价或生产</strong>
+      <span>${escapeHtml(reason)}${lockedVersion ? `；已锁定版本 ${escapeHtml(lockedVersion.number)} 不会被覆盖` : ""}。</span>
+      <div class="result-diff">
+        ${diff.labels.length ? diff.labels.map((label) => `<b>${escapeHtml(label)}</b>`).join("") : "<b>计算输入已发生变化</b>"}
+      </div>
+    </div>
+  `;
+  elements.lockProductionButton.textContent = "重新计算后锁定";
+}
+
 function resetResults() {
   lastResult = null;
   lastQuotation = null;
@@ -445,6 +629,42 @@ function resetResults() {
   elements.resultFilterBar.hidden = true;
   elements.resultCaption.textContent = "结果仅在当前设备生成";
   elements.quotationSection.hidden = true;
+  if (elements.resultValidity) elements.resultValidity.hidden = true;
+  setResultDependentControls(false);
+}
+
+function invalidateCalculation(reason = "清单或加工规则已修改") {
+  if (state.calculationBaseline) {
+    state.calculationState = {
+      status: "stale",
+      reason,
+      changedAt: new Date().toISOString(),
+    };
+    if (["calculated", "quoted", "production"].includes(state.status)) {
+      state.status = "review";
+      elements.projectStatus.value = state.status;
+    }
+  }
+  if (lastResult) {
+    lastQuotation = null;
+    elements.resultCaption.textContent = "旧结果仅供对照 · 请重新计算";
+    renderResultValidity();
+  } else {
+    resetResults();
+  }
+}
+
+function requireCurrentResult(message = "清单或规则已变化，请重新计算") {
+  if (!lastResult) {
+    showToast("请先完成排版计算");
+    return false;
+  }
+  if (!isCurrentResult()) {
+    renderResultValidity();
+    showToast(message);
+    return false;
+  }
+  return true;
 }
 
 function renderParseFeedback(result) {
@@ -455,9 +675,16 @@ function renderParseFeedback(result) {
   const warningHtml = warnings.length
     ? `<ul>${warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join("")}</ul>`
     : "";
+  const provenance = result.stats.provenance || {};
   elements.parseFeedback.innerHTML = `
     <strong>已识别 ${result.stats.partTypeCount} 种板件 / ${result.stats.pieceCount} 片${result.stats.materialRuleCount ? ` · ${result.stats.materialRuleCount} 条余料规则` : ""}</strong>
     <span>解析覆盖率约 ${coverage}% · 请在下方确认尺寸、颜色、木纹、板件封边和余料规则。</span>
+    <div class="parse-trace-summary">
+      <b>原文明确 ${provenance.explicit || 0}</b>
+      <b>上下文继承 ${provenance.inherited || 0}</b>
+      <b>系统推断 ${provenance.inferred || 0}</b>
+      <b class="${provenance.default ? "needs-review" : ""}">待确认 ${provenance.default || 0}</b>
+    </div>
     ${warningHtml}
     ${result.warnings.length > warnings.length ? `<small>另有 ${result.warnings.length - warnings.length} 行未展示。</small>` : ""}
   `;
@@ -490,6 +717,9 @@ function parseRawInput() {
       edgeLong: part.edgeLong,
       edgeShort: part.edgeShort,
       reviewFlags: part.reviewFlags,
+      sourceText: part.sourceText,
+      sourceLine: part.sourceLine,
+      provenance: part.provenance,
     }),
   );
 
@@ -499,7 +729,7 @@ function parseRawInput() {
     : result.materialRules;
   selectedPartIds.clear();
   renderParts();
-  resetResults();
+  invalidateCalculation("重新解析了文字清单");
   renderParseFeedback(result);
   saveSnapshot("文字清单解析");
   document.getElementById("parts-title").scrollIntoView({ behavior: "smooth", block: "start" });
@@ -575,23 +805,36 @@ function updateStateFromPartInput(target) {
     part.edgeLong = preset.edgeLong;
     part.edgeShort = preset.edgeShort;
     part.reviewFlags = (part.reviewFlags || []).filter((flag) => !flag.includes("封边"));
+    markProvenanceConfirmed(part, "edges");
+    markProvenanceConfirmed(part, "edges");
   } else if (target.type === "checkbox") part[field] = target.checked;
   else if (target.type === "number" || target.tagName === "SELECT") part[field] = parseNumericValue(target.value);
   else part[field] = target.value;
 
   if (field === "material") {
     part.reviewFlags = (part.reviewFlags || []).filter((flag) => !flag.includes("颜色"));
+    markProvenanceConfirmed(part, "material");
     renderLeftoverRules();
   }
-  if (field === "quantity") part.reviewFlags = (part.reviewFlags || []).filter((flag) => !flag.includes("数量"));
-  if (field === "name") part.reviewFlags = (part.reviewFlags || []).filter((flag) => !flag.includes("板件名"));
-  if (field === "length" || field === "width") part.reviewFlags = (part.reviewFlags || []).filter((flag) => !flag.includes("尺寸"));
+  if (field === "quantity") {
+    part.reviewFlags = (part.reviewFlags || []).filter((flag) => !flag.includes("数量"));
+    markProvenanceConfirmed(part, "quantity");
+  }
+  if (field === "name") {
+    part.reviewFlags = (part.reviewFlags || []).filter((flag) => !flag.includes("板件名"));
+    markProvenanceConfirmed(part, "name");
+  }
+  if (field === "length" || field === "width") {
+    part.reviewFlags = (part.reviewFlags || []).filter((flag) => !flag.includes("尺寸"));
+    markProvenanceConfirmed(part, "size");
+  }
+  if (field === "grainLocked") markProvenanceConfirmed(part, "grain");
 
   const count = state.parts.reduce((sum, item) => sum + Math.max(0, Number(item.quantity) || 0), 0);
   elements.partsSummary.textContent = `${state.parts.length} 种板件 · ${count} 片`;
   elements.calculationReady.textContent = count ? `共 ${count} 片，等待排版` : "请先添加板件";
   renderPartsReview();
-  resetResults();
+  invalidateCalculation(`修改了“${part.name || "板件"}”`);
   saveState();
 }
 
@@ -601,7 +844,7 @@ function selectedParts() {
 
 function finishBatchChange(message) {
   renderParts();
-  resetResults();
+  invalidateCalculation(message);
   saveSnapshot(message);
   showToast(message);
 }
@@ -624,6 +867,7 @@ function applyBatchGrain() {
   const grainLocked = elements.batchGrainSelect.value === "true";
   targets.forEach((part) => {
     part.grainLocked = grainLocked;
+    markProvenanceConfirmed(part, "grain");
   });
   finishBatchChange(`已将所选 ${targets.length} 项设为${grainLocked ? "锁定木纹" : "允许旋转"}`);
 }
@@ -640,6 +884,7 @@ function applyBatchMaterial() {
   targets.forEach((part) => {
     part.material = material;
     part.reviewFlags = (part.reviewFlags || []).filter((flag) => !flag.includes("颜色"));
+    markProvenanceConfirmed(part, "material");
   });
   elements.batchMaterialInput.value = "";
   finishBatchChange(`已将所选 ${targets.length} 项改为${material}`);
@@ -1110,10 +1355,8 @@ function renderQuotation(result) {
 }
 
 function saveQuoteVersion() {
-  if (!lastResult || !lastQuotation) {
-    showToast("请先完成排版并核对报价");
-    return;
-  }
+  if (!requireCurrentResult("当前排版已过期，重新计算后才能保存报价")) return;
+  if (!lastQuotation) return;
   const quote = createQuoteVersion(state, lastResult, lastQuotation);
   state.quoteVersions = [quote, ...(state.quoteVersions || [])];
   state.status = "quoted";
@@ -1300,11 +1543,37 @@ function openPrintDocument(content) {
 }
 
 function printResult() {
-  if (!lastResult) {
-    showToast("请先完成排版计算");
+  if (!requireCurrentResult("当前排版已过期，重新计算后才能打印")) return;
+  openPrintDocument(createPrintDocument(lastResult));
+}
+
+function lockProductionVersion() {
+  if (!requireCurrentResult("当前排版已过期，重新计算后才能锁定生产")) return;
+  if (!lastResult.totals?.integrityOk || lastResult.totals?.placedPartCount !== lastResult.totals?.partCount) {
+    showToast("生产完整性校验未通过，暂时不能锁定");
     return;
   }
-  openPrintDocument(createPrintDocument(lastResult));
+  const existingLock = (state.productionVersions || []).find(
+    (version) => version.signature === state.calculationBaseline.signature,
+  );
+  if (existingLock) {
+    state.currentProductionLockId = existingLock.id;
+    renderResultValidity();
+    showToast(`${existingLock.number} 已经锁定`);
+    return;
+  }
+  const version = createProductionVersion(
+    state,
+    lastResult,
+    state.calculationBaseline,
+  );
+  state.productionVersions = [version, ...(state.productionVersions || [])].slice(0, 5);
+  state.currentProductionLockId = version.id;
+  state.status = "production";
+  elements.projectStatus.value = state.status;
+  saveSnapshot(`锁定生产版本 ${version.number}`);
+  renderResultValidity();
+  showToast(`已锁定生产版本 ${version.number}`);
 }
 
 function renderResults(result) {
@@ -1383,6 +1652,7 @@ function renderResults(result) {
     <div><span>封边公式</span><strong>${edgeFormula}</strong><small>板件与余料封边合并计损耗；${result.settings.roundEdgeBand ? "不同颜色分别按整米向上取整，再汇总领料。" : "不同颜色分别保留两位小数，再汇总领料。"}</small></div>
   `;
   renderQuotation(result);
+  renderResultValidity();
 }
 
 function runOptimizationInWorker(parts, settings) {
@@ -1391,7 +1661,7 @@ function runOptimizationInWorker(parts, settings) {
   }
 
   calculationWorker?.terminate();
-  calculationWorker = new Worker("./optimizer-worker.js?v=20260730-1", { type: "module" });
+  calculationWorker = new Worker("./optimizer-worker.js?v=20260730-2", { type: "module" });
   const requestId = makeId();
 
   return new Promise((resolve, reject) => {
@@ -1444,6 +1714,12 @@ async function calculate() {
       ...state.settings,
       materialRules: state.materialRules,
     });
+    state.calculationBaseline = createCalculationBaseline(state, result);
+    state.calculationState = {
+      status: "current",
+      calculatedAt: state.calculationBaseline.calculatedAt,
+    };
+    result.inputSignature = state.calculationBaseline.signature;
     state.status = "calculated";
     elements.projectStatus.value = state.status;
     renderResults(result);
@@ -1482,7 +1758,7 @@ function exportProject() {
 }
 
 function exportCsv() {
-  if (!lastResult) return;
+  if (!requireCurrentResult("当前排版已过期，重新计算后才能导出清单")) return;
   const rows = [
     ["项目", state.projectName],
     ["标准板", `${lastResult.settings.boardWidth} × ${lastResult.settings.boardHeight} mm`],
@@ -1645,19 +1921,19 @@ function renderAll() {
 document.getElementById("add-part-button").addEventListener("click", () => {
   state.parts.push(newPart());
   renderParts();
-  resetResults();
+  invalidateCalculation("新增了板件");
   saveState();
   elements.partsBody.querySelector("tr:last-child input")?.focus();
 });
 
 document.getElementById("sample-button").addEventListener("click", () => {
-  state.parts = createSampleParts().map((part) => ({ ...part, id: makeId() }));
+  state.parts = createSampleParts().map((part) => newPart({ ...part, id: makeId() }));
   state.materialRules = {};
   selectedPartIds.clear();
   state.settings = { ...DEFAULT_SETTINGS };
   renderSettings();
   renderParts();
-  resetResults();
+  invalidateCalculation("载入了示例数据");
   saveSnapshot("载入示例数据");
   showToast("已载入 1 张标准板的示例数据");
 });
@@ -1713,17 +1989,45 @@ elements.leftoverRulesList.addEventListener("change", (event) => {
     [material]: rule,
   };
   renderLeftoverRules();
-  resetResults();
+  invalidateCalculation(`修改了“${material}”余料规则`);
   saveState();
 });
 elements.partsBody.addEventListener("click", (event) => {
+  const sourceButton = event.target.closest('[data-action="toggle-source"]');
+  if (sourceButton) {
+    const row = sourceButton.closest("tr[data-id]");
+    const detail = elements.partsBody.querySelector(
+      `[data-source-detail="${CSS.escape(row.dataset.id)}"]`,
+    );
+    if (detail) {
+      detail.hidden = !detail.hidden;
+      sourceButton.classList.toggle("is-open", !detail.hidden);
+    }
+    return;
+  }
+
+  const confirmButton = event.target.closest('[data-action="confirm-source"]');
+  if (confirmButton) {
+    const detail = confirmButton.closest("[data-source-detail]");
+    const part = state.parts.find((item) => item.id === detail?.dataset.sourceDetail);
+    if (!part) return;
+    Object.keys(PROVENANCE_FIELD_LABELS).forEach((field) =>
+      markProvenanceConfirmed(part, field),
+    );
+    part.reviewFlags = [];
+    renderParts();
+    saveState();
+    showToast(`已确认“${part.name}”`);
+    return;
+  }
+
   const button = event.target.closest('[data-action="delete"]');
   if (!button) return;
   const row = button.closest("tr[data-id]");
   state.parts = state.parts.filter((part) => part.id !== row.dataset.id);
   selectedPartIds.delete(row.dataset.id);
   renderParts();
-  resetResults();
+  invalidateCalculation("删除了板件");
   saveState();
 });
 
@@ -1733,14 +2037,13 @@ document.querySelectorAll("[data-setting]").forEach((input) => {
     state.settings[key] = input.type === "checkbox" ? input.checked : parseNumericValue(input.value, state.settings[key]);
     state.settings = normalizeSettings(state.settings);
     renderSettings();
-    resetResults();
+    invalidateCalculation("修改了加工规则");
     saveState();
   });
 });
 
 elements.projectName.addEventListener("input", () => {
   state.projectName = elements.projectName.value || "未命名项目";
-  resetResults();
   saveState();
 });
 elements.customerName.addEventListener("input", () => {
@@ -1782,6 +2085,7 @@ elements.importFile.addEventListener("change", () => {
 });
 document.getElementById("csv-button").addEventListener("click", exportCsv);
 document.getElementById("print-button").addEventListener("click", printResult);
+elements.lockProductionButton.addEventListener("click", lockProductionVersion);
 
 document.getElementById("project-center-button").addEventListener("click", () => {
   saveState({ immediate: true });
@@ -1880,17 +2184,12 @@ elements.materialPriceList.addEventListener("input", (event) => {
 elements.leftoverOwnership.addEventListener("change", updateQuotation);
 document.getElementById("save-quote-button").addEventListener("click", saveQuoteVersion);
 document.getElementById("customer-quote-button").addEventListener("click", () => {
-  if (!lastQuotation) {
-    showToast("请先完成排版并生成报价");
-    return;
-  }
+  if (!requireCurrentResult("当前排版已过期，重新计算后才能生成报价单")) return;
+  if (!lastQuotation) return;
   openPrintDocument(createCustomerQuoteDocument());
 });
 document.getElementById("production-order-button").addEventListener("click", () => {
-  if (!lastResult) {
-    showToast("请先完成排版计算");
-    return;
-  }
+  if (!requireCurrentResult("当前排版已过期，重新计算后才能生成生产单")) return;
   openPrintDocument(createPrintDocument(lastResult));
 });
 
