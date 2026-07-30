@@ -277,6 +277,20 @@ function parseGrain(line) {
   return /(?:木纹|纹理|顺纹|竖纹|锁纹|方向固定|不可旋转)/.test(line);
 }
 
+function hasGrainInstruction(line) {
+  return /(?:无纹|不锁|可旋转|自由旋转|横竖可调|木纹|纹理|顺纹|竖纹|锁纹|方向固定|不可旋转)/.test(line);
+}
+
+function hasMaterialInstruction(line) {
+  const leadingLabel = line.match(/^([^\d:=]{2,20})\s+(?=\d)/)?.[1]?.trim();
+  return (
+    MATERIAL_KEYS.some((key) => new RegExp(`${key}\\s*[:=]?\\s*\\S+`, "i").test(line)) ||
+    /^[^:=]{2,30}\s*:\s*\d/.test(line) ||
+    (Boolean(leadingLabel) &&
+      /(?:白|灰|黑|胡桃|橡木|科技木|柚木|榆|杉|纯色|免漆|饰面|花色|板材)$/.test(leadingLabel))
+  );
+}
+
 function parseName(line, sizeRaw) {
   let nameSource = cleanText(line)
     .replace(/^[^:=]{2,30}\s*:\s*(?=\d)/, " ")
@@ -307,21 +321,27 @@ function parseName(line, sizeRaw) {
 function splitLines(text) {
   return String(text || "")
     .split(/\r?\n/)
-    .flatMap((line) => {
+    .flatMap((line, rawIndex) => {
       const segmentPattern = SIZE_TOKEN_PATTERN;
-      if (!segmentPattern.test(line)) return [line];
+      if (!segmentPattern.test(line)) return [{ text: line, lineNumber: rawIndex + 1 }];
       const segments = line
         .split(/\s*[;,，；、]\s*/)
         .map((segment) => cleanText(segment))
         .filter(Boolean);
-      return segments.length > 1 && segments.every((segment) => segmentPattern.test(segment) || hasEdgeInstruction(segment))
-        ? segments
-        : splitCompactMultiSpecLine(line);
+      const parsedSegments =
+        segments.length > 1 &&
+        segments.every((segment) => segmentPattern.test(segment) || hasEdgeInstruction(segment))
+          ? segments
+          : splitCompactMultiSpecLine(line);
+      return parsedSegments.map((segment) => ({
+        text: segment,
+        lineNumber: rawIndex + 1,
+      }));
     })
-    .map((line) => cleanText(line))
-    .filter(Boolean)
-    .filter((line) => !/^(?:项目|工程|客户|地址|电话|备注|说明)\s*:/i.test(line))
-    .filter((line) => !/^(?:序号|编号|名称|板件|尺寸|长\s*宽|length|name)\b/i.test(line));
+    .map((entry) => ({ ...entry, text: cleanText(entry.text) }))
+    .filter((entry) => Boolean(entry.text))
+    .filter((entry) => !/^(?:项目|工程|客户|地址|电话|备注|说明)\s*:/i.test(entry.text))
+    .filter((entry) => !/^(?:序号|编号|名称|板件|尺寸|长\s*宽|length|name)\b/i.test(entry.text));
 }
 
 function splitCompactMultiSpecLine(line) {
@@ -344,6 +364,20 @@ function splitCompactMultiSpecLine(line) {
   });
 }
 
+function isBareMaterialHeadingBeforeParts(lines, index, line) {
+  const lookahead = lines.slice(index + 1, index + 4);
+  const sizeOffset = lookahead.findIndex((candidate) => Boolean(parseSize(candidate)));
+  const intervening = sizeOffset < 0 ? [] : lookahead.slice(0, sizeOffset);
+  return (
+    sizeOffset >= 0 &&
+    intervening.every(
+      (candidate) => hasEdgeInstruction(candidate) || hasLeftoverInstruction(candidate),
+    ) &&
+    /^[\u4e00-\u9fa5A-Za-z0-9·\-\s]{2,20}$/.test(line) &&
+    !/(?:客户|项目|说明|备注|请|需要|按照|照旧|同上|做|要|说|尺寸|数量|封边)/.test(line)
+  );
+}
+
 export function parsePartsText(text, options = {}) {
   const parseOptions = { ...DEFAULT_PARSE_OPTIONS, ...options };
   const warnings = [];
@@ -352,15 +386,21 @@ export function parsePartsText(text, options = {}) {
   let currentMaterial = parseOptions.defaultMaterial;
   let currentEdges = parseOptions.defaultEdges;
   let currentEdgesExplicit = false;
+  let currentMaterialSourceLine = null;
+  let currentEdgesSourceLine = null;
   let segmentStart = 0;
-  const lines = splitLines(text);
+  const lineEntries = splitLines(text);
+  const lines = lineEntries.map((entry) => entry.text);
 
   lines.forEach((line, index) => {
+    const sourceLine = lineEntries[index].lineNumber;
     const nextMaterial = parseMaterial(line, currentMaterial);
     if (isMaterialHeading(line)) {
       currentMaterial = nextMaterial;
+      currentMaterialSourceLine = sourceLine;
       currentEdges = parseOptions.defaultEdges;
       currentEdgesExplicit = false;
+      currentEdgesSourceLine = null;
       segmentStart = parts.length;
       return;
     }
@@ -389,38 +429,44 @@ export function parsePartsText(text, options = {}) {
       } else if (hasEdgeInstruction(line)) {
         currentEdges = parseEdges(line);
         currentEdgesExplicit = true;
+        currentEdgesSourceLine = sourceLine;
         const futureOnly = /(?:以下|下面|后面|后续|往下|之后)/.test(line) && !/(?:以上|上面|前面|前述|之前)/.test(line);
         if (!futureOnly) {
           for (let partIndex = segmentStart; partIndex < parts.length; partIndex += 1) {
             if (!parts[partIndex].edgeExplicit) {
               parts[partIndex].edgeLong = currentEdges.edgeLong;
               parts[partIndex].edgeShort = currentEdges.edgeShort;
+              parts[partIndex].provenance.fields.edges = {
+                kind: "inherited",
+                sourceLine,
+                note: `继承第 ${sourceLine} 行封边规则`,
+              };
             }
           }
         }
-      } else if (
-        index + 1 < lines.length &&
-        parseSize(lines[index + 1]) &&
-        /^[\u4e00-\u9fa5A-Za-z0-9·\-\s]{2,20}$/.test(line) &&
-        !/(?:客户|项目|说明|备注|请|需要|按照|照旧|同上|做|要|说|尺寸|数量|封边)/.test(line)
-      ) {
+      } else if (isBareMaterialHeadingBeforeParts(lines, index, line)) {
         currentMaterial = line;
+        currentMaterialSourceLine = sourceLine;
         currentEdges = parseOptions.defaultEdges;
         currentEdgesExplicit = false;
+        currentEdgesSourceLine = null;
         segmentStart = parts.length;
       } else {
-        warnings.push(`第 ${index + 1} 行未识别到尺寸：${line}`);
+        warnings.push(`第 ${sourceLine} 行未识别到尺寸：${line}`);
       }
       return;
     }
 
+    const materialExplicit = hasMaterialInstruction(line);
     const material = nextMaterial;
     if (material && material !== currentMaterial) {
       currentEdges = parseOptions.defaultEdges;
       currentEdgesExplicit = false;
+      currentEdgesSourceLine = null;
       segmentStart = parts.length;
     }
     currentMaterial = material || currentMaterial;
+    if (materialExplicit) currentMaterialSourceLine = sourceLine;
     const parsedEdges = parseEdges(line);
     const edges = parsedEdges.explicit ? parsedEdges : currentEdges || parsedEdges;
     const parsedName = parseName(line, size.raw);
@@ -453,11 +499,49 @@ export function parsePartsText(text, options = {}) {
       edgeShort: edges.edgeShort,
       edgeExplicit: parsedEdges.explicit,
       sourceText: line,
+      sourceLine,
       reviewFlags,
+      provenance: {
+        origin: "parsed",
+        sourceLine,
+        sourceText: line,
+        fields: {
+          name: usedFallbackName
+            ? { kind: "inferred", sourceLine, note: "未识别到明确板件名，已生成临时名称" }
+            : { kind: "explicit", sourceLine, note: "原文明确" },
+          material: materialExplicit
+            ? { kind: "explicit", sourceLine, note: "本行明确" }
+            : material && material !== "未分类" && currentMaterialSourceLine
+              ? {
+                  kind: "inherited",
+                  sourceLine: currentMaterialSourceLine,
+                  note: `继承第 ${currentMaterialSourceLine} 行颜色/材质`,
+                }
+              : { kind: "default", sourceLine, note: "未识别到颜色/材质" },
+          size: size.normalizedDirection
+            ? { kind: "inferred", sourceLine, note: "已按长边在前自动调换长宽" }
+            : { kind: "explicit", sourceLine, note: "原文明确" },
+          quantity: hasCountInstruction(line)
+            ? { kind: "explicit", sourceLine, note: "原文明确" }
+            : { kind: "default", sourceLine, note: "原文未写数量，按 1 片" },
+          edges: parsedEdges.explicit
+            ? { kind: "explicit", sourceLine, note: "本行明确" }
+            : currentEdgesExplicit
+              ? {
+                  kind: "inherited",
+                  sourceLine: currentEdgesSourceLine,
+                  note: `继承第 ${currentEdgesSourceLine} 行封边规则`,
+                }
+              : { kind: "default", sourceLine, note: "未写封边，按默认单边" },
+          grain: hasGrainInstruction(line)
+            ? { kind: "explicit", sourceLine, note: "原文明确" }
+            : { kind: "default", sourceLine, note: "未写木纹，按允许旋转" },
+        },
+      },
     };
 
     if (part.length <= 0 || part.width <= 0) {
-      warnings.push(`第 ${index + 1} 行尺寸无效：${line}`);
+      warnings.push(`第 ${sourceLine} 行尺寸无效：${line}`);
       return;
     }
     parts.push(part);
@@ -473,6 +557,15 @@ export function parsePartsText(text, options = {}) {
       pieceCount: parts.reduce((sum, part) => sum + part.quantity, 0),
       reviewCount: parts.filter((part) => part.reviewFlags.length > 0).length,
       materialRuleCount: Object.keys(materialRules).length,
+      provenance: parts.reduce(
+        (summary, part) => {
+          Object.values(part.provenance?.fields || {}).forEach((field) => {
+            summary[field.kind] = (summary[field.kind] || 0) + 1;
+          });
+          return summary;
+        },
+        { explicit: 0, inherited: 0, inferred: 0, default: 0, confirmed: 0 },
+      ),
     },
   };
 }
