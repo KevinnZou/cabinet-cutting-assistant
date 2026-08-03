@@ -4,7 +4,7 @@ const DEFAULT_PARSE_OPTIONS = Object.freeze({
   defaultStripLength: 2440,
   defaultEdges: { edgeLong: 1, edgeShort: 0 },
 });
-const DIMENSION_UNIT_PATTERN = "(?:mm|毫米|cm|厘米|m|米)?";
+const DIMENSION_UNIT_PATTERN = "(?:mm|毫米|cm|厘米|公分|m|米)?";
 const NUMBER_PATTERN = "\\d+(?:\\.\\d+)?";
 const SIZE_TOKEN_PATTERN = new RegExp(
   `${NUMBER_PATTERN}\\s*${DIMENSION_UNIT_PATTERN}\\s*[x*]\\s*${NUMBER_PATTERN}\\s*${DIMENSION_UNIT_PATTERN}(?:\\s*(?:=|[x*])\\s*\\d+\\s*(?:片|块|件|个|pcs?|张)?)?`,
@@ -48,7 +48,7 @@ function toNumber(value, fallback = 0) {
 function normalizeDimensionUnit(value, unit) {
   const number = toNumber(value);
   if (!number) return 0;
-  if (/cm|厘米/i.test(unit || "")) return Math.round(number * 10);
+  if (/cm|厘米|公分/i.test(unit || "")) return Math.round(number * 10);
   if (/m|米/i.test(unit || "") && !/mm/i.test(unit || "")) return Math.round(number * 1000);
   return Math.round(number);
 }
@@ -83,19 +83,19 @@ function normalizeCompactDimensions(lengthValue, lengthUnit, widthValue, widthUn
 }
 
 function parseCount(line) {
-  const sizeEqualsCount = line.match(/\b\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|m|米)?\s*[x*]\s*\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|m|米)?\s*(?:=|@|\/)\s*(\d+)\s*(?:片|块|件|个|pcs?|p|张)?/i);
+  const sizeEqualsCount = line.match(/\b\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|公分|m|米)?\s*[x*]\s*\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|公分|m|米)?\s*(?:=|@|\/)\s*(\d+)\s*(?:片|块|件|个|pcs?|p|张)?/i);
   if (sizeEqualsCount) return Math.max(1, Math.floor(toNumber(sizeEqualsCount[1], 1)));
 
-  const sizeParenCount = line.match(/\b\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|m|米)?\s*[x*]\s*\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|m|米)?\s*(?:\(\s*(\d+)\s*(?:片|块|件|个|pcs?|p|张)?\s*\)|(\d+)\s*(?:片|块|件|个|pcs?|p|张))/i);
+  const sizeParenCount = line.match(/\b\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|公分|m|米)?\s*[x*]\s*\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|公分|m|米)?\s*(?:\(\s*(\d+)\s*(?:片|块|件|个|pcs?|p|张)?\s*\)|(\d+)\s*(?:片|块|件|个|pcs?|p|张))/i);
   if (sizeParenCount) return Math.max(1, Math.floor(toNumber(sizeParenCount[1] || sizeParenCount[2], 1)));
 
-  const equalCount = line.match(/(?:^|[:=\s])\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米)?\s*=\s*(\d+)\s*(?:片|块|件|个|pcs?|张)?/i);
+  const equalCount = line.match(/(?:^|[:=\s])\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|公分)?\s*=\s*(\d+)\s*(?:片|块|件|个|pcs?|张)?/i);
   if (equalCount) return Math.max(1, Math.floor(toNumber(equalCount[1], 1)));
 
-  const afterSize = line.match(/\b\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|m|米)?\s*x\s*\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|m|米)?\s*(?:x|×|\*)\s*(\d+)\s*(?:片|块|件|个|pcs?|张)?/i);
+  const afterSize = line.match(/\b\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|公分|m|米)?\s*x\s*\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|公分|m|米)?\s*(?:x|×|\*)\s*(\d+)\s*(?:片|块|件|个|pcs?|张)?/i);
   if (afterSize) return Math.max(1, Math.floor(toNumber(afterSize[1], 1)));
 
-  const tableTriplet = line.match(/(?:^|[^\d.])\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|m|米)?\s+\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|m|米)?\s+(\d+)\s*(?:片|块|件|个|pcs?|张)?(?:$|[^\d.])/i);
+  const tableTriplet = line.match(/(?:^|[^\d.])\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|公分|m|米)?\s+\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|公分|m|米)?\s+(\d+)\s*(?:片|块|件|个|pcs?|张)?(?:$|[^\d.])/i);
   if (tableTriplet) return Math.max(1, Math.floor(toNumber(tableTriplet[1], 1)));
 
   const explicit = line.match(/(?:数量|数|qty|q|共)\s*[:=]?\s*(\d+)\s*(?:片|块|件|个|pcs?|张)?/i);
@@ -112,11 +112,11 @@ function hasCountInstruction(line) {
 function parseSize(line) {
   const labelled = [
     {
-      pattern: /(?:长|长度|l)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*(mm|毫米|cm|厘米|m|米)?\D{0,12}(?:宽|宽度|w|深|深度|d)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*(mm|毫米|cm|厘米|m|米)?/i,
+      pattern: /(?:长|长度|l)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*(mm|毫米|cm|厘米|公分|m|米)?\D{0,12}(?:宽|宽度|w|深|深度|d)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*(mm|毫米|cm|厘米|公分|m|米)?/i,
       order: "length-width",
     },
     {
-      pattern: /(?:宽|宽度|w|深|深度|d)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*(mm|毫米|cm|厘米|m|米)?\D{0,12}(?:长|长度|l)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*(mm|毫米|cm|厘米|m|米)?/i,
+      pattern: /(?:宽|宽度|w|深|深度|d)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*(mm|毫米|cm|厘米|公分|m|米)?\D{0,12}(?:长|长度|l)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*(mm|毫米|cm|厘米|公分|m|米)?/i,
       order: "width-length",
     },
   ];
@@ -133,7 +133,7 @@ function parseSize(line) {
       : { length, width, raw: match[0], normalizedDirection: false };
   }
 
-  const compact = line.match(/(?:^|[^\d.])(\d+(?:\.\d+)?)\s*(mm|毫米|cm|厘米|m|米)?\s*[x*]\s*(\d+(?:\.\d+)?)\s*(mm|毫米|cm|厘米|m|米)?(?=$|[^\d.]|[x*]\d)/i);
+  const compact = line.match(/(?:^|[^\d.])(\d+(?:\.\d+)?)\s*(mm|毫米|cm|厘米|公分|m|米)?\s*[x*]\s*(\d+(?:\.\d+)?)\s*(mm|毫米|cm|厘米|公分|m|米)?(?=$|[^\d.]|[x*]\d)/i);
   if (compact) {
     const size = normalizeCompactDimensions(compact[1], compact[2], compact[3], compact[4]);
     return {
@@ -143,7 +143,7 @@ function parseSize(line) {
     };
   }
 
-  const tableTriplet = line.match(/(?:^|[^\d.])(\d+(?:\.\d+)?)\s*(mm|毫米|cm|厘米|m|米)?\s+(\d+(?:\.\d+)?)\s*(mm|毫米|cm|厘米|m|米)?\s+\d+\s*(?:片|块|件|个|pcs?|张)?(?:$|[^\d.])/i);
+  const tableTriplet = line.match(/(?:^|[^\d.])(\d+(?:\.\d+)?)\s*(mm|毫米|cm|厘米|公分|m|米)?\s+(\d+(?:\.\d+)?)\s*(mm|毫米|cm|厘米|公分|m|米)?\s+\d+\s*(?:片|块|件|个|pcs?|张)?(?:$|[^\d.])/i);
   if (tableTriplet) {
     const size = normalizeCompactDimensions(tableTriplet[1], tableTriplet[2], tableTriplet[3], tableTriplet[4]);
     return {
@@ -153,12 +153,22 @@ function parseSize(line) {
     };
   }
 
-  const strip = line.match(/(?:^|[:=\s])(\d+(?:\.\d+)?)\s*(mm|毫米|cm|厘米)?\s*=\s*\d+\s*(?:片|块|件|个|pcs?|张)?/i);
+  const strip = line.match(/(?:^|[:=\s])(\d+(?:\.\d+)?)\s*(mm|毫米|cm|厘米|公分)?\s*=\s*\d+\s*(?:片|块|件|个|pcs?|张)?/i);
   if (strip) {
     return {
       length: DEFAULT_PARSE_OPTIONS.defaultStripLength,
       width: normalizeDimensionUnit(strip[1], strip[2]),
       raw: strip[0],
+      kind: "strip",
+    };
+  }
+
+  const singleStrip = line.match(/(?:^|[^\d.])(\d+(?:\.\d+)?)\s*(mm|毫米|cm|厘米|公分)?(?=\s*(?:单边|双边|封边|长边|短边|不封|免封|\d+\s*(?:片|块|件|个|pcs?|p|张)))/i);
+  if (singleStrip && (singleStrip[2] || hasCountInstruction(line) || hasEdgeInstruction(line))) {
+    return {
+      length: DEFAULT_PARSE_OPTIONS.defaultStripLength,
+      width: normalizeDimensionUnit(singleStrip[1], singleStrip[2]),
+      raw: singleStrip[0].replace(/^[^\d.]/, ""),
       kind: "strip",
     };
   }
@@ -204,7 +214,7 @@ function parseEdges(line) {
   } else if (/(?:3边|三边|封3边|封三边)/.test(line)) {
     edgeLong = 2;
     edgeShort = 1;
-  } else if (/(?:长条\s*(?:双边封|封双边|双边)|条子\s*(?:双边封|封双边|双边)|线条\s*(?:双边封|封双边|双边)|地脚线.*双边|全双边|双边封|封双边|两边封|封边\s*[:=]?\s*双边)/.test(line)) {
+  } else if (/(?:长条\s*(?:双边封|封双边|双边)|条子\s*(?:双边封|封双边|双边)|线条\s*(?:双边封|封双边|双边)|地脚线.*双边|全双边|双边封|封双边|双边|两边封|封边\s*[:=]?\s*双边)/.test(line)) {
     edgeLong = 2;
   } else if (/(?:不封边|不用封边|无需封边|免封边|不封|封边\s*[:=]?\s*(?:无|没有|0\s*[/,， ]\s*0))/.test(line)) {
     edgeLong = 0;
@@ -213,7 +223,7 @@ function parseEdges(line) {
     edgeLong = 2;
   } else if (/(?:单长边|长边\s*1|长\s*1|一条长边|左封|右封|前封|后封)/.test(line)) {
     edgeLong = 1;
-  } else if (/(?:全单边|单边封|封单边|封一边|一边封|(?:^|\s|\(|（)单边(?:$|\s|\)|）)|都单边|封边\s*[:=]?\s*单边)/.test(line)) {
+  } else if (/(?:全单边|单边封|封单边|单边|封一边|一边封|都单边|封边\s*[:=]?\s*单边)/.test(line)) {
     edgeLong = 1;
   }
 
@@ -249,7 +259,7 @@ function parseEdges(line) {
 }
 
 function hasEdgeInstruction(line) {
-  return /(?:封边|封单边|单边封|全单边|单边|双边封|封双边|全双边|两边封|长条\s*双边|条子\s*双边|线条\s*双边|地脚线.*双边|3边|三边|4边|四边|四周|周边|全封|长边|短边|双长|两长|双短|两短|左右封|上下封|左封|右封|上封|下封|一长一短|长短各一|两长一短|两短一长|门.*四周|不封边|不用封边|无需封边|免封边|不封)/.test(line);
+  return /(?:封边|封单边|单边封|全单边|单边|双边封|封双边|全双边|双边|两边封|长条\s*双边|条子\s*双边|线条\s*双边|地脚线.*双边|3边|三边|4边|四边|四周|周边|全封|长边|短边|双长|两长|双短|两短|左右封|上下封|左封|右封|上封|下封|一长一短|长短各一|两长一短|两短一长|门.*四周|不封边|不用封边|无需封边|免封边|不封)/.test(line);
 }
 
 function hasLeftoverInstruction(line) {
@@ -303,7 +313,7 @@ function parseName(line, sizeRaw) {
     .replace(/封边\s*[:=]?\s*(?:四周|四边|4边|四|4|单边|双边|无|没有|不封|0\s*[/,， ]\s*0)/gi, " ")
     .replace(/(?:=|@|\/)\s*\d+\s*(?:片|块|件|个|pcs?|p|张)?/gi, " ")
     .replace(/(?:长边|短边)\s*[:=]?\s*[012]/gi, " ")
-    .replace(/(?:长条\s*双边封|长条\s*封双边|长条\s*双边|条子\s*双边封|条子\s*封双边|条子\s*双边|线条\s*双边封|线条\s*封双边|线条\s*双边|全双边|双边封|封双边|两边封|全单边|单边封|封单边|封一边|一边封|单边|三边封|封三边|3边|三边|四边封|四周封|全封边|封4边|封四边|4边|四边|四周|周边封|全封|双长边?|两长边?|单长边|双短边?|两短边?|单短边|左右封|上下封|左封|右封|上封|下封|一条长边|两条长边|一条短边|两条短边|一长一短|长短各一|两长一短|两短一长|不封边|不用封边|无需封边|免封边|不封|木纹|纹理|顺纹|竖纹|锁纹|方向固定|不可旋转|无纹|不锁|可旋转|自由旋转|横竖可调)/g, " ")
+    .replace(/(?:长条\s*双边封|长条\s*封双边|长条\s*双边|条子\s*双边封|条子\s*封双边|条子\s*双边|线条\s*双边封|线条\s*封双边|线条\s*双边|全双边|双边封|封双边|双边|两边封|全单边|单边封|封单边|封一边|一边封|单边|三边封|封三边|3边|三边|四边封|四周封|全封边|封4边|封四边|4边|四边|四周|周边封|全封|双长边?|两长边?|单长边|双短边?|两短边?|单短边|左右封|上下封|左封|右封|上封|下封|一条长边|两条长边|一条短边|两条短边|一长一短|长短各一|两长一短|两短一长|不封边|不用封边|无需封边|免封边|不封|木纹|纹理|顺纹|竖纹|锁纹|方向固定|不可旋转|无纹|不锁|可旋转|自由旋转|横竖可调)/g, " ")
     .replace(/(?:封边\s*:?|边\s*:)/g, " ")
     .replace(/(?:^|\s)(?:双|单|两条|一条)?(?:长边|短边)(?:$|\s)/g, " ")
     .replace(/[()（）]/g, " ")
