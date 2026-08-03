@@ -6,7 +6,7 @@ import {
   normalizeSettings,
   optimizeCutting,
 } from "./optimizer.js";
-import { createParserExampleByType, parsePartsText } from "./parser.js";
+import { createParserExampleByType, parsePartsText } from "./parser.js?v=20260803-1";
 import {
   createCalculationBaseline,
   createProductionVersion,
