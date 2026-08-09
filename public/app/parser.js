@@ -10,6 +10,16 @@ const SIZE_TOKEN_PATTERN = new RegExp(
   `${NUMBER_PATTERN}\\s*${DIMENSION_UNIT_PATTERN}\\s*[x*]\\s*${NUMBER_PATTERN}\\s*${DIMENSION_UNIT_PATTERN}(?:\\s*(?:=|[x*])\\s*\\d+\\s*(?:片|块|件|个|pcs?|张)?)?`,
   "i",
 );
+const STRIP_EQUALS_TOKEN_PATTERN = new RegExp(
+  `${NUMBER_PATTERN}\\s*${DIMENSION_UNIT_PATTERN}\\s*=\\s*\\d+\\s*(?:片|块|件|个|pcs?|p|张)?`,
+  "i",
+);
+const EDGE_TOKEN_PATTERN = "(?:单边|双边|四边|四周|全封边|封单边|封双边|双长边?|双短边?|单长边|单短边|一长一短|两长一短|两短一长|不封边|不封|免封边|免封)";
+const MATERIAL_SUFFIX_PATTERN = "(?:白|灰|黑|胡桃|橡木|科技木|柚木|榆|杉|木纹|纯色|免漆|免漆板|生态板|颗粒板|多层板|欧松板|饰面|花色|板材)";
+const SINGLE_STRIP_TOKEN_PATTERN = new RegExp(
+  `(?:${NUMBER_PATTERN}\\s*(?:mm|毫米|cm|厘米|公分)\\s*(?:${EDGE_TOKEN_PATTERN}\\s*)?\\d+\\s*(?:片|块|件|个|pcs?|p|张)(?:\\s*${EDGE_TOKEN_PATTERN})?|${NUMBER_PATTERN}\\s*${EDGE_TOKEN_PATTERN}\\s*\\d+\\s*(?:片|块|件|个|pcs?|p|张))`,
+  "i",
+);
 const NAME_STOP_WORDS = new Set([
   "长",
   "宽",
@@ -183,7 +193,7 @@ function parseMaterial(line, currentMaterial = "") {
   const leadingMaterial = line.match(/^([^\d:=]{2,20})\s+(?=\d)/);
   if (
     leadingMaterial &&
-    /(?:白|灰|黑|胡桃|橡木|科技木|柚木|榆|杉|木纹|纯色|免漆|饰面|花色|板材)$/i.test(leadingMaterial[1].trim())
+    new RegExp(`${MATERIAL_SUFFIX_PATTERN}$`, "i").test(leadingMaterial[1].trim())
   ) {
     return leadingMaterial[1].trim();
   }
@@ -297,7 +307,7 @@ function hasMaterialInstruction(line) {
     MATERIAL_KEYS.some((key) => new RegExp(`${key}\\s*[:=]?\\s*\\S+`, "i").test(line)) ||
     /^[^:=]{2,30}\s*:\s*\d/.test(line) ||
     (Boolean(leadingLabel) &&
-      /(?:白|灰|黑|胡桃|橡木|科技木|柚木|榆|杉|纯色|免漆|饰面|花色|板材)$/.test(leadingLabel))
+      new RegExp(`${MATERIAL_SUFFIX_PATTERN}$`).test(leadingLabel))
   );
 }
 
@@ -332,7 +342,7 @@ function splitLines(text) {
   return String(text || "")
     .split(/\r?\n/)
     .flatMap((line, rawIndex) => {
-      const segmentPattern = SIZE_TOKEN_PATTERN;
+      const segmentPattern = partTokenPattern();
       if (!segmentPattern.test(line)) return [{ text: line, lineNumber: rawIndex + 1 }];
       const segments = line
         .split(/\s*[;,，；、]\s*/)
@@ -340,7 +350,7 @@ function splitLines(text) {
         .filter(Boolean);
       const parsedSegments =
         segments.length > 1 &&
-        segments.every((segment) => segmentPattern.test(segment) || hasEdgeInstruction(segment))
+        segments.every((segment) => partTokenPattern().test(segment) || hasEdgeInstruction(segment))
           ? segments
           : splitCompactMultiSpecLine(line);
       return parsedSegments.map((segment) => ({
@@ -354,9 +364,16 @@ function splitLines(text) {
     .filter((entry) => !/^(?:序号|编号|名称|板件|尺寸|长\s*宽|length|name)\b/i.test(entry.text));
 }
 
+function partTokenPattern(flags = "i") {
+  return new RegExp(
+    `(?:${SIZE_TOKEN_PATTERN.source}|${STRIP_EQUALS_TOKEN_PATTERN.source}|${SINGLE_STRIP_TOKEN_PATTERN.source})`,
+    flags,
+  );
+}
+
 function splitCompactMultiSpecLine(line) {
   const cleaned = cleanText(line);
-  const matches = [...cleaned.matchAll(new RegExp(SIZE_TOKEN_PATTERN.source, "gi"))];
+  const matches = [...cleaned.matchAll(partTokenPattern("gi"))];
   if (matches.length <= 1) return [line];
 
   const firstStart = matches[0].index || 0;
@@ -364,7 +381,7 @@ function splitCompactMultiSpecLine(line) {
   const prefixLooksLikeMaterial =
     prefix &&
     /^[^\d:=]{2,30}$/.test(prefix) &&
-    /(?:白|灰|黑|胡桃|橡木|科技木|柚木|榆|杉|木纹|纯色|免漆|饰面|花色|板材)$/.test(prefix);
+    new RegExp(`${MATERIAL_SUFFIX_PATTERN}$`).test(prefix);
 
   return matches.map((match, index) => {
     const start = index === 0 ? 0 : match.index || 0;
