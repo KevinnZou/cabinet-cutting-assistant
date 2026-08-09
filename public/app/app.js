@@ -6,7 +6,7 @@ import {
   normalizeSettings,
   optimizeCutting,
 } from "./optimizer.js";
-import { createParserExampleByType, parsePartsText } from "./parser.js?v=20260809-1";
+import { createParserExampleByType, parsePartsText } from "./parser.js?v=20260809-2";
 import {
   createCalculationBaseline,
   createProductionVersion,
@@ -104,6 +104,11 @@ const elements = {
   quoteSummary: document.getElementById("quote-summary"),
   quoteVersionList: document.getElementById("quote-version-list"),
   projectCenterDialog: document.getElementById("project-center-dialog"),
+  newProjectDialog: document.getElementById("new-project-dialog"),
+  newProjectForm: document.getElementById("new-project-form"),
+  newProjectName: document.getElementById("new-project-name"),
+  newProjectCustomer: document.getElementById("new-project-customer"),
+  newProjectDate: document.getElementById("new-project-date"),
   projectList: document.getElementById("project-list"),
   projectSearch: document.getElementById("project-search"),
   projectFilter: document.getElementById("project-filter"),
@@ -1006,11 +1011,30 @@ function renderHistory() {
     : '<div class="empty-panel">当前项目还没有历史版本</div>';
 }
 
-function createNewProject() {
+function getNextProjectName() {
+  return `柜体项目 ${workspace.projects.filter((project) => !project.deletedAt).length + 1}`;
+}
+
+function openNewProjectDialog() {
+  saveState({ immediate: true });
+  elements.newProjectName.value = getNextProjectName();
+  elements.newProjectCustomer.value = "";
+  elements.newProjectDate.value = "";
+  if (elements.projectCenterDialog.open) elements.projectCenterDialog.close();
+  elements.newProjectDialog.showModal();
+  elements.newProjectName.select();
+}
+
+function createNewProject(overrides = {}) {
   saveState({ immediate: true });
   const initial = createInitialState();
   initial.parts = [];
-  initial.projectName = `新项目 ${workspace.projects.filter((project) => !project.deletedAt).length + 1}`;
+  initial.projectName = String(overrides.projectName || getNextProjectName()).trim() || getNextProjectName();
+  initial.customer = {
+    ...initial.customer,
+    name: String(overrides.customerName || "").trim(),
+  };
+  initial.deliveryDate = overrides.deliveryDate || "";
   const project = createProjectRecord(initial);
   workspace.projects.unshift(project);
   workspace.activeProjectId = project.id;
@@ -1021,6 +1045,7 @@ function createNewProject() {
   lastQuotation = null;
   renderAll();
   renderProjectList();
+  if (elements.newProjectDialog.open) elements.newProjectDialog.close();
   if (elements.projectCenterDialog.open) elements.projectCenterDialog.close();
   showToast("已创建新项目");
 }
@@ -2111,7 +2136,7 @@ document.getElementById("project-center-button").addEventListener("click", () =>
   renderProjectList();
   elements.projectCenterDialog.showModal();
 });
-document.getElementById("quick-new-project-button").addEventListener("click", createNewProject);
+document.getElementById("quick-new-project-button").addEventListener("click", openNewProjectDialog);
 document.getElementById("price-book-button").addEventListener("click", () => {
   renderPriceBook();
   elements.priceBookDialog.showModal();
@@ -2125,7 +2150,15 @@ document.querySelectorAll("[data-close-dialog]").forEach((button) => {
     document.getElementById(button.dataset.closeDialog)?.close();
   });
 });
-document.getElementById("new-project-button").addEventListener("click", createNewProject);
+document.getElementById("new-project-button").addEventListener("click", openNewProjectDialog);
+elements.newProjectForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  createNewProject({
+    projectName: elements.newProjectName.value,
+    customerName: elements.newProjectCustomer.value,
+    deliveryDate: elements.newProjectDate.value,
+  });
+});
 elements.projectSearch.addEventListener("input", renderProjectList);
 elements.projectFilter.addEventListener("change", renderProjectList);
 elements.projectList.addEventListener("click", (event) => {
