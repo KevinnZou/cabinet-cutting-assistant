@@ -176,13 +176,14 @@
               <select data-setting="optimizationMode">
                 <option value="balanced">当前算法（默认）</option>
                 <option value="save">省板优先（更慢）</option>
+                <option value="aggressive">极限省板（实验）</option>
               </select>
             </label>
           </div>
 
           <div class="rule-note">
             <strong>排版口径</strong>
-            <p>默认采用当前稳定策略；省板优先会额外比较更多排序方案，可能更省板，但计算会更慢，仍不承诺数学上的全局最优。</p>
+            <p>默认采用当前稳定策略；省板优先会额外比较更多排序方案；极限省板会对整长条做更激进的凑宽搜索，适合大批量条子料，计算更慢。</p>
           </div>
         </aside>
 
