@@ -182,7 +182,7 @@ test("多策略排版返回生产完整性审计结果", () => {
     { id: "a", name: "A", material: "白色", length: 920, width: 510, quantity: 7 },
     { id: "b", name: "B", material: "白色", length: 760, width: 330, quantity: 9 },
     { id: "c", name: "C", material: "白色", length: 450, width: 210, quantity: 13 },
-  ]);
+  ], { optimizationMode: "balanced" });
 
   assert.equal(result.totals.strategyCount, 4);
   assert.equal(result.totals.integrityOk, true);
@@ -190,13 +190,13 @@ test("多策略排版返回生产完整性审计结果", () => {
   assert.equal(result.totals.placedPartCount, 29);
 });
 
-test("省板优先模式会比较更多排版策略且默认模式保持不变", () => {
+test("省板优先模式会比较更多排版策略且通用矩形模式保持旧策略", () => {
   const parts = [
     { id: "a", name: "A", material: "白色", length: 920, width: 510, quantity: 7 },
     { id: "b", name: "B", material: "白色", length: 760, width: 330, quantity: 9 },
     { id: "c", name: "C", material: "白色", length: 450, width: 210, quantity: 13 },
   ];
-  const balanced = optimizeCutting(parts);
+  const balanced = optimizeCutting(parts, { optimizationMode: "balanced" });
   const save = optimizeCutting(parts, { optimizationMode: "save" });
 
   assert.equal(balanced.settings.optimizationMode, "balanced");
@@ -215,10 +215,13 @@ test("极限省板模式会对整长条做凑宽搜索", () => {
     { id: "strip-35", name: "35公分", material: "闫墨", length: 2440, width: 350, quantity: 22, edgeLong: 1, grainLocked: true },
     { id: "strip-8", name: "8公分", material: "闫墨", length: 2440, width: 80, quantity: 9, edgeLong: 2, grainLocked: true },
   ];
-  const balanced = optimizeCutting(parts, { kerf: 3 });
+  const balanced = optimizeCutting(parts, { kerf: 3, optimizationMode: "balanced" });
+  const cabinet = optimizeCutting(parts, { kerf: 3 });
   const aggressive = optimizeCutting(parts, { kerf: 3, optimizationMode: "aggressive" });
 
   assert.equal(balanced.totals.sheetCount, 54);
+  assert.equal(cabinet.settings.optimizationMode, "cabinet");
+  assert.equal(cabinet.totals.sheetCount, 52);
   assert.equal(aggressive.settings.optimizationMode, "aggressive");
   assert.equal(aggressive.totals.sheetCount, 52);
   assert.equal(aggressive.totals.placedPartCount, 135);
@@ -229,8 +232,8 @@ test("极限省板模式会对整长条做凑宽搜索", () => {
 test("未知排版策略会回落到当前算法", () => {
   const result = optimizeCutting([], { optimizationMode: "unknown" });
 
-  assert.equal(result.settings.optimizationMode, "balanced");
-  assert.equal(result.totals.strategyCount, 4);
+  assert.equal(result.settings.optimizationMode, "cabinet");
+  assert.equal(result.totals.strategyCount, 5);
 });
 
 test("随机规格回归：数量、边界和重叠保持一致", () => {
