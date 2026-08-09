@@ -24,9 +24,11 @@ test("排版使用后台线程并提供颜色筛选和生产校验", async () =>
   assert.match(html, /id="result-quality"/);
   assert.match(html, /id="result-material-filter"/);
   assert.match(html, /data-setting="optimizationMode"/);
+  assert.match(html, /柜体长条优先/);
   assert.match(html, /省板优先/);
   assert.match(html, /极限省板/);
   assert.match(script, /new Worker\("\.\/optimizer-worker\.js/);
+  assert.match(script, /正在长条凑宽/);
   assert.match(script, /正在省板优化/);
   assert.match(script, /正在极限省板/);
   assert.match(script, /单次最多计算 20000 片/);
