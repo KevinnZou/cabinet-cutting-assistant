@@ -6,7 +6,7 @@ import {
   normalizeSettings,
   optimizeCutting,
 } from "./optimizer.js";
-import { createParserExampleByType, parsePartsText } from "./parser.js?v=20260803-1";
+import { createParserExampleByType, parsePartsText } from "./parser.js?v=20260809-1";
 import {
   createCalculationBaseline,
   createProductionVersion,
@@ -1013,7 +1013,7 @@ function createNewProject() {
   lastQuotation = null;
   renderAll();
   renderProjectList();
-  elements.projectCenterDialog.close();
+  if (elements.projectCenterDialog.open) elements.projectCenterDialog.close();
   showToast("已创建新项目");
 }
 
@@ -2092,6 +2092,7 @@ document.getElementById("project-center-button").addEventListener("click", () =>
   renderProjectList();
   elements.projectCenterDialog.showModal();
 });
+document.getElementById("quick-new-project-button").addEventListener("click", createNewProject);
 document.getElementById("price-book-button").addEventListener("click", () => {
   renderPriceBook();
   elements.priceBookDialog.showModal();
