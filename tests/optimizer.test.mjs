@@ -190,6 +190,30 @@ test("多策略排版返回生产完整性审计结果", () => {
   assert.equal(result.totals.placedPartCount, 29);
 });
 
+test("省板优先模式会比较更多排版策略且默认模式保持不变", () => {
+  const parts = [
+    { id: "a", name: "A", material: "白色", length: 920, width: 510, quantity: 7 },
+    { id: "b", name: "B", material: "白色", length: 760, width: 330, quantity: 9 },
+    { id: "c", name: "C", material: "白色", length: 450, width: 210, quantity: 13 },
+  ];
+  const balanced = optimizeCutting(parts);
+  const save = optimizeCutting(parts, { optimizationMode: "save" });
+
+  assert.equal(balanced.settings.optimizationMode, "balanced");
+  assert.equal(balanced.totals.strategyCount, 4);
+  assert.equal(save.settings.optimizationMode, "save");
+  assert.ok(save.totals.strategyCount > balanced.totals.strategyCount);
+  assert.ok(save.totals.sheetCount <= balanced.totals.sheetCount);
+  assert.equal(save.totals.integrityOk, true);
+});
+
+test("未知排版策略会回落到当前算法", () => {
+  const result = optimizeCutting([], { optimizationMode: "unknown" });
+
+  assert.equal(result.settings.optimizationMode, "balanced");
+  assert.equal(result.totals.strategyCount, 4);
+});
+
 test("随机规格回归：数量、边界和重叠保持一致", () => {
   let seed = 20260729;
   const random = () => {
