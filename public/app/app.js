@@ -543,7 +543,8 @@ function renderSettings() {
 
 function updateRuleSummary() {
   const settings = normalizeSettings(state.settings);
-  elements.ruleSummary.textContent = `标准板 ${settings.boardWidth} × ${settings.boardHeight} mm · 锯缝 ${settings.kerf} mm · 修边 ${settings.trim} mm`;
+  const modeLabel = settings.optimizationMode === "save" ? "省板优先" : "当前算法";
+  elements.ruleSummary.textContent = `标准板 ${settings.boardWidth} × ${settings.boardHeight} mm · 锯缝 ${settings.kerf} mm · 修边 ${settings.trim} mm · ${modeLabel}`;
 }
 
 const RESULT_DEPENDENT_ACTIONS = [
@@ -1706,12 +1707,14 @@ async function calculate() {
     return;
   }
 
+  const settings = normalizeSettings(state.settings);
   elements.calculateButton.disabled = true;
-  elements.calculateButton.querySelector("span").textContent = "正在比较排版方案…";
+  elements.calculateButton.querySelector("span").textContent =
+    settings.optimizationMode === "save" ? "正在省板优化…" : "正在比较排版方案…";
 
   try {
     const result = await runOptimizationInWorker(state.parts, {
-      ...state.settings,
+      ...settings,
       materialRules: state.materialRules,
     });
     state.calculationBaseline = createCalculationBaseline(state, result);
@@ -2034,7 +2037,9 @@ elements.partsBody.addEventListener("click", (event) => {
 document.querySelectorAll("[data-setting]").forEach((input) => {
   input.addEventListener("change", () => {
     const key = input.dataset.setting;
-    state.settings[key] = input.type === "checkbox" ? input.checked : parseNumericValue(input.value, state.settings[key]);
+    if (input.type === "checkbox") state.settings[key] = input.checked;
+    else if (input.tagName === "SELECT") state.settings[key] = input.value;
+    else state.settings[key] = parseNumericValue(input.value, state.settings[key]);
     state.settings = normalizeSettings(state.settings);
     renderSettings();
     invalidateCalculation("修改了加工规则");
