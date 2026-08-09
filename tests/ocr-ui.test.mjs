@@ -35,5 +35,8 @@ test("提供独立 OCR 测试台对比多种识别方案", async () => {
   assert.match(labScript, /OCR\.space 接口/);
   assert.match(labScript, /parsePartsText/);
   assert.match(labScript, /paddleocr-browser/);
+  assert.match(labScript, /loadScriptFromAny/);
+  assert.match(labScript, /@techstark\/opencv-js/);
+  assert.match(labScript, /unpkg\.com/);
   assert.match(labScript, /tesseract\.js@5/);
 });
