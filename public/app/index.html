@@ -174,7 +174,8 @@
             <label class="full-field">
               <span>优化模式</span>
               <select data-setting="optimizationMode">
-                <option value="balanced">当前算法（默认）</option>
+                <option value="cabinet">柜体长条优先（默认）</option>
+                <option value="balanced">通用矩形排版</option>
                 <option value="save">省板优先（更慢）</option>
                 <option value="aggressive">极限省板（实验）</option>
               </select>
@@ -183,7 +184,7 @@
 
           <div class="rule-note">
             <strong>排版口径</strong>
-            <p>默认采用当前稳定策略；省板优先会额外比较更多排序方案；极限省板会对整长条做更激进的凑宽搜索，适合大批量条子料，计算更慢。</p>
+            <p>默认按柜体长条单处理，优先对 2440 整长条做凑宽排版；柜门或异形板可切到通用矩形；极限省板会放宽搜索时间，适合大批量条子料复核。</p>
           </div>
         </aside>
 
