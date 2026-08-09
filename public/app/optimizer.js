@@ -6,6 +6,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   edgeLoss: 3,
   allowRotation: true,
   roundEdgeBand: true,
+  optimizationMode: "balanced",
   materialRules: {},
 });
 
@@ -22,6 +23,7 @@ function clamp(value, min, max) {
 }
 
 const EDGE_MODE_PATTERN = /^(?:[012])\/(?:[012])$/;
+const OPTIMIZATION_MODES = new Set(["balanced", "save"]);
 
 export function normalizeMaterialRules(input = {}) {
   if (!input || typeof input !== "object" || Array.isArray(input)) return {};
@@ -80,6 +82,9 @@ export function normalizeSettings(input = {}) {
       input.roundEdgeBand === undefined
         ? DEFAULT_SETTINGS.roundEdgeBand
         : Boolean(input.roundEdgeBand),
+    optimizationMode: OPTIMIZATION_MODES.has(String(input.optimizationMode || ""))
+      ? String(input.optimizationMode)
+      : DEFAULT_SETTINGS.optimizationMode,
     materialRules: normalizeMaterialRules(input.materialRules),
   };
 }
@@ -421,6 +426,34 @@ const SORT_STRATEGIES = [
     b.length * b.width - a.length * a.width,
 ];
 
+const SAVE_BOARD_SORT_STRATEGIES = [
+  ...SORT_STRATEGIES,
+  (a, b) =>
+    b.width - a.width ||
+    b.length * b.width - a.length * a.width,
+  (a, b) =>
+    b.length - a.length ||
+    b.length * b.width - a.length * a.width,
+  (a, b) =>
+    Math.abs(b.length - b.width) - Math.abs(a.length - a.width) ||
+    b.length * b.width - a.length * a.width,
+  (a, b) =>
+    a.width - b.width ||
+    b.length * b.width - a.length * a.width,
+  (a, b) =>
+    a.length - b.length ||
+    b.length * b.width - a.length * a.width,
+  (a, b) =>
+    a.length + a.width - (b.length + b.width) ||
+    b.length * b.width - a.length * a.width,
+];
+
+function getSortStrategies(settings) {
+  return settings.optimizationMode === "save"
+    ? SAVE_BOARD_SORT_STRATEGIES
+    : SORT_STRATEGIES;
+}
+
 function canFitEmptySheet(part, settings) {
   return Boolean(findBestPlacement(createSheet(part.material, 0, settings), part, settings));
 }
@@ -567,6 +600,7 @@ function validatePackedSheets(sheets, settings) {
 
 export function optimizeCutting(rawParts, rawSettings = {}) {
   const settings = normalizeSettings(rawSettings);
+  const strategies = getSortStrategies(settings);
   const normalizedParts = rawParts.map(normalizePart);
   const invalidParts = normalizedParts.filter((part) => !isValidPart(part));
   const validParts = normalizedParts.filter(isValidPart);
@@ -581,7 +615,7 @@ export function optimizeCutting(rawParts, rawSettings = {}) {
     const materialInstances = placeableInstances.filter((part) => part.material === material);
     let bestSheets = null;
 
-    for (const comparator of SORT_STRATEGIES) {
+    for (const comparator of strategies) {
       const candidate = packMaterialInstances(materialInstances, material, settings, comparator);
       if (
         !bestSheets ||
@@ -723,7 +757,7 @@ export function optimizeCutting(rawParts, rawSettings = {}) {
       edgeBandOrderMeters,
       integrityOk: auditIssues.length === 0,
       auditIssues,
-      strategyCount: SORT_STRATEGIES.length,
+      strategyCount: strategies.length,
       leftoverCount: sheets.reduce((sum, sheet) => sum + sheet.leftovers.length, 0),
       leftoverArea: sheets.reduce((sum, sheet) => sum + sheet.leftoverArea, 0),
       discardArea: Math.max(
