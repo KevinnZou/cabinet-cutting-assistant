@@ -9,8 +9,8 @@
     />
     <meta name="theme-color" content="#14271e" />
     <title>开料工作台｜柜体板开料计算助手</title>
-    <link rel="icon" type="image/svg+xml" href="./favicon.svg?v=20260809-1" />
-    <link rel="stylesheet" href="./app.css?v=20260809-1" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg?v=20260809-2" />
+    <link rel="stylesheet" href="./app.css?v=20260809-2" />
   </head>
   <body>
     <header class="topbar">
@@ -20,8 +20,6 @@
       </a>
       <div class="topbar-actions">
         <span class="local-badge"><i></i> 数据仅保存在本机</span>
-        <button class="quiet-button accent" id="quick-new-project-button" type="button">新建项目</button>
-        <button class="quiet-button" id="project-center-button" type="button">项目中心</button>
         <button class="quiet-button" id="price-book-button" type="button">价格档案</button>
         <a class="quiet-link" href="../intro/">产品介绍</a>
       </div>
@@ -34,18 +32,28 @@
           <h1 id="page-title">把板件清单，变成可执行的排版结果</h1>
           <p>直接粘贴客户清单、报价单文字或 OCR 结果，先自动解析成板件表，再按本厂规则计算板材张数、封边用量和排版位置。</p>
         </div>
-        <div class="project-tools">
+        <div class="project-tools" aria-label="当前项目">
+          <div class="project-tools-head">
+            <div>
+              <span class="panel-kicker">CURRENT PROJECT</span>
+              <strong>当前项目</strong>
+            </div>
+            <span class="save-status" id="save-status">已保存到本机</span>
+          </div>
           <label class="project-name">
             <span>项目名称</span>
             <input id="project-name" type="text" maxlength="50" value="新建柜体项目" />
           </label>
+          <div class="project-primary-actions">
+            <button class="button dark" id="project-center-button" type="button">切换 / 管理项目</button>
+            <button class="button primary compact-primary" id="quick-new-project-button" type="button"><span>新建项目</span><b>＋</b></button>
+          </div>
           <div class="file-actions">
             <button class="button subtle" id="history-button" type="button">版本历史</button>
-            <button class="button subtle" id="import-button" type="button">导入项目</button>
-            <button class="button subtle" id="export-button" type="button">导出项目</button>
+            <button class="button subtle" id="import-button" type="button">导入</button>
+            <button class="button subtle" id="export-button" type="button">导出</button>
             <input id="import-file" type="file" accept="application/json,.json" hidden />
           </div>
-          <span class="save-status" id="save-status">已保存到本机</span>
         </div>
         <div class="project-meta">
           <label><span>客户名称</span><input id="customer-name" type="text" maxlength="50" placeholder="选填" /></label>
@@ -364,6 +372,27 @@
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
+    <dialog class="app-dialog new-project-dialog" id="new-project-dialog">
+      <form id="new-project-form" method="dialog">
+        <div class="dialog-head">
+          <div><span class="panel-kicker">NEW PROJECT</span><h2>新建项目</h2><p>创建独立清单，当前项目会先自动保存。</p></div>
+          <button class="dialog-close" type="button" data-close-dialog="new-project-dialog" aria-label="关闭">×</button>
+        </div>
+        <div class="new-project-body">
+          <label><span>项目名称</span><input id="new-project-name" type="text" maxlength="50" required /></label>
+          <label><span>客户名称</span><input id="new-project-customer" type="text" maxlength="50" placeholder="选填" /></label>
+          <label><span>交付日期</span><input id="new-project-date" type="date" /></label>
+        </div>
+        <div class="dialog-footer split">
+          <small>新项目会作为全新的订单保存；旧项目可在项目中心继续打开。</small>
+          <div>
+            <button class="button subtle" type="button" data-close-dialog="new-project-dialog">取消</button>
+            <button class="button primary compact-primary" type="submit"><span>创建并打开</span><b>→</b></button>
+          </div>
+        </div>
+      </form>
+    </dialog>
+
     <dialog class="app-dialog project-center-dialog" id="project-center-dialog">
       <div class="dialog-head">
         <div><span class="panel-kicker">LOCAL PROJECTS</span><h2>项目中心</h2><p>这里管理不同客户/订单；“版本历史”只用于回溯当前项目的不同计算节点。</p></div>
@@ -374,7 +403,7 @@
         <span>点“新建项目”会创建一张全新的空白清单；旧项目仍保存在本机，可随时从项目中心打开、复制、归档或删除。</span>
       </div>
       <div class="project-center-toolbar">
-        <button class="button primary" id="new-project-button" type="button"><span>新建项目</span><b>＋</b></button>
+        <button class="button primary compact-primary" id="new-project-button" type="button"><span>新建项目</span><b>＋</b></button>
         <input id="project-search" type="search" placeholder="搜索项目或客户" />
         <select id="project-filter">
           <option value="active">全部进行中</option>
@@ -429,6 +458,6 @@
       </div>
     </dialog>
 
-    <script type="module" src="./app.js?v=20260809-1"></script>
+    <script type="module" src="./app.js?v=20260809-2"></script>
   </body>
 </html>
