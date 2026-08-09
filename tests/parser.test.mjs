@@ -179,6 +179,37 @@ test("支持只写一个公分尺寸的条子料口语清单", () => {
   assert.equal(result.stats.pieceCount, 250);
 });
 
+test("支持同一行连续写多个条子料规格", () => {
+  const result = parsePartsText("60公分单边40片 56公分单边100片 55公分单边60片 35公分单边30片 60公分双边20片");
+
+  assert.equal(result.parts.length, 5);
+  assert.deepEqual(
+    result.parts.map((part) => [part.length, part.width, part.quantity, part.edgeLong, part.edgeShort]),
+    [
+      [2440, 600, 40, 1, 0],
+      [2440, 560, 100, 1, 0],
+      [2440, 550, 60, 1, 0],
+      [2440, 350, 30, 1, 0],
+      [2440, 600, 20, 2, 0],
+    ],
+  );
+});
+
+test("支持同一行多个等号条子料并继承颜色", () => {
+  const result = parsePartsText("黑色免漆板 540=6片 670=11片 570=7片 110=24片 单边");
+
+  assert.equal(result.parts.length, 4);
+  assert.deepEqual(
+    result.parts.map((part) => [part.material, part.length, part.width, part.quantity, part.edgeLong, part.edgeShort]),
+    [
+      ["黑色免漆板", 2440, 540, 6, 1, 0],
+      ["黑色免漆板", 2440, 670, 11, 1, 0],
+      ["黑色免漆板", 2440, 570, 7, 1, 0],
+      ["黑色免漆板", 2440, 110, 24, 1, 0],
+    ],
+  );
+});
+
 test("支持以下都封边和显式不封边", () => {
   const result = parsePartsText(`
 颜色:暖白
