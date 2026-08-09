@@ -9,7 +9,8 @@
     />
     <meta name="theme-color" content="#14271e" />
     <title>开料工作台｜柜体板开料计算助手</title>
-    <link rel="stylesheet" href="./app.css?v=20260730-2" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg?v=20260809-1" />
+    <link rel="stylesheet" href="./app.css?v=20260809-1" />
   </head>
   <body>
     <header class="topbar">
@@ -19,6 +20,7 @@
       </a>
       <div class="topbar-actions">
         <span class="local-badge"><i></i> 数据仅保存在本机</span>
+        <button class="quiet-button accent" id="quick-new-project-button" type="button">新建项目</button>
         <button class="quiet-button" id="project-center-button" type="button">项目中心</button>
         <button class="quiet-button" id="price-book-button" type="button">价格档案</button>
         <a class="quiet-link" href="../intro/">产品介绍</a>
@@ -350,8 +352,12 @@
 
     <dialog class="app-dialog project-center-dialog" id="project-center-dialog">
       <div class="dialog-head">
-        <div><span class="panel-kicker">LOCAL PROJECTS</span><h2>项目中心</h2><p>项目、报价和历史版本都保存在当前浏览器</p></div>
+        <div><span class="panel-kicker">LOCAL PROJECTS</span><h2>项目中心</h2><p>这里管理不同客户/订单；“版本历史”只用于回溯当前项目的不同计算节点。</p></div>
         <button class="dialog-close" type="button" data-close-dialog="project-center-dialog" aria-label="关闭">×</button>
+      </div>
+      <div class="project-center-guide">
+        <strong>新单子怎么开？</strong>
+        <span>点“新建项目”会创建一张全新的空白清单；旧项目仍保存在本机，可随时从项目中心打开、复制、归档或删除。</span>
       </div>
       <div class="project-center-toolbar">
         <button class="button primary" id="new-project-button" type="button"><span>新建项目</span><b>＋</b></button>
@@ -409,6 +415,6 @@
       </div>
     </dialog>
 
-    <script type="module" src="./app.js?v=20260803-1"></script>
+    <script type="module" src="./app.js?v=20260809-1"></script>
   </body>
 </html>
