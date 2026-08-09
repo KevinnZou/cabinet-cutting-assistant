@@ -23,7 +23,7 @@ function clamp(value, min, max) {
 }
 
 const EDGE_MODE_PATTERN = /^(?:[012])\/(?:[012])$/;
-const OPTIMIZATION_MODES = new Set(["balanced", "save"]);
+const OPTIMIZATION_MODES = new Set(["balanced", "save", "aggressive"]);
 
 export function normalizeMaterialRules(input = {}) {
   if (!input || typeof input !== "object" || Array.isArray(input)) return {};
@@ -449,9 +449,197 @@ const SAVE_BOARD_SORT_STRATEGIES = [
 ];
 
 function getSortStrategies(settings) {
-  return settings.optimizationMode === "save"
+  return settings.optimizationMode === "save" || settings.optimizationMode === "aggressive"
     ? SAVE_BOARD_SORT_STRATEGIES
     : SORT_STRATEGIES;
+}
+
+const AGGRESSIVE_SEARCH_DEADLINE_MS = 1800;
+const AGGRESSIVE_MAX_STRIP_TYPES = 12;
+const AGGRESSIVE_MAX_PATTERNS = 12000;
+
+function isFullLengthStrip(part, settings) {
+  const usableHeight = settings.boardHeight - settings.trim * 2;
+  const usableWidth = settings.boardWidth - settings.trim * 2;
+  return (
+    part.length === usableHeight &&
+    part.width > 0 &&
+    part.width <= usableWidth &&
+    !getOrientations(part, settings).some(
+      (orientation) =>
+        orientation.rotated &&
+        orientation.width <= usableWidth + settings.kerf &&
+        orientation.height <= usableHeight + settings.kerf,
+    )
+  );
+}
+
+function groupStripInstances(instances, settings) {
+  const groups = new Map();
+
+  for (const part of instances) {
+    if (!isFullLengthStrip(part, settings)) return null;
+    const key = [
+      part.length,
+      part.width,
+      part.name,
+      part.edgeLong,
+      part.edgeShort,
+      part.grainLocked ? 1 : 0,
+    ].join("|");
+    if (!groups.has(key)) {
+      groups.set(key, {
+        sample: part,
+        cutWidth: part.width + settings.kerf,
+        instances: [],
+      });
+    }
+    groups.get(key).instances.push(part);
+  }
+
+  return [...groups.values()].sort(
+    (a, b) => b.cutWidth - a.cutWidth || b.instances.length - a.instances.length,
+  );
+}
+
+function generateStripPatterns(groups, capacity) {
+  const counts = groups.map((group) => group.instances.length);
+  const patterns = [];
+  const current = Array(groups.length).fill(0);
+
+  function visit(index, remaining, sum, count) {
+    if (patterns.length > AGGRESSIVE_MAX_PATTERNS) return;
+    if (index === groups.length) {
+      if (sum > 0) {
+        patterns.push({
+          counts: [...current],
+          sum,
+          count,
+        });
+      }
+      return;
+    }
+
+    const maxCount = Math.min(counts[index], Math.floor(remaining / groups[index].cutWidth));
+    for (let quantity = 0; quantity <= maxCount; quantity += 1) {
+      current[index] = quantity;
+      visit(
+        index + 1,
+        remaining - quantity * groups[index].cutWidth,
+        sum + quantity * groups[index].cutWidth,
+        count + quantity,
+      );
+    }
+    current[index] = 0;
+  }
+
+  visit(0, capacity, 0, 0);
+  if (patterns.length > AGGRESSIVE_MAX_PATTERNS) return null;
+
+  return patterns.sort(
+    (a, b) =>
+      b.sum - a.sum ||
+      b.count - a.count ||
+      b.counts.findIndex((count, index) => count !== a.counts[index]),
+  );
+}
+
+function remainingAreaLowerBound(remainingCounts, groups, capacity) {
+  const remainingWidth = remainingCounts.reduce(
+    (sum, count, index) => sum + count * groups[index].cutWidth,
+    0,
+  );
+  return Math.ceil(remainingWidth / capacity);
+}
+
+function solveStripPatterns(groups, capacity, upperBound) {
+  if (!groups.length || groups.length > AGGRESSIVE_MAX_STRIP_TYPES) return null;
+
+  const patterns = generateStripPatterns(groups, capacity);
+  if (!patterns) return null;
+
+  const start = Date.now();
+  const initialRemaining = groups.map((group) => group.instances.length);
+  let best = null;
+  let bestCount = upperBound;
+  const memo = new Map();
+
+  function search(remaining, chosen) {
+    if (Date.now() - start > AGGRESSIVE_SEARCH_DEADLINE_MS) return;
+    if (remaining.every((count) => count === 0)) {
+      if (chosen.length < bestCount) {
+        best = chosen;
+        bestCount = chosen.length;
+      }
+      return;
+    }
+    if (chosen.length + remainingAreaLowerBound(remaining, groups, capacity) >= bestCount) {
+      return;
+    }
+
+    const key = remaining.join(",");
+    const previousDepth = memo.get(key);
+    if (previousDepth !== undefined && previousDepth <= chosen.length) return;
+    memo.set(key, chosen.length);
+
+    const firstRemainingType = remaining.findIndex((count) => count > 0);
+    const candidates = patterns.filter(
+      (pattern) =>
+        pattern.counts[firstRemainingType] > 0 &&
+        pattern.counts.every((count, index) => count <= remaining[index]),
+    );
+
+    for (const pattern of candidates) {
+      const nextRemaining = remaining.map((count, index) => count - pattern.counts[index]);
+      search(nextRemaining, [...chosen, pattern]);
+      if (Date.now() - start > AGGRESSIVE_SEARCH_DEADLINE_MS) return;
+    }
+  }
+
+  search(initialRemaining, []);
+  return best;
+}
+
+function buildStripSheetsFromPatterns(patterns, groups, material, settings) {
+  const queues = groups.map((group) => [...group.instances]);
+
+  return patterns.map((pattern, sheetIndex) => {
+    const sheet = createSheet(material, sheetIndex, settings);
+    let x = settings.trim;
+
+    for (let groupIndex = 0; groupIndex < groups.length; groupIndex += 1) {
+      for (let count = 0; count < pattern.counts[groupIndex]; count += 1) {
+        const part = queues[groupIndex].shift();
+        commitPlacement(sheet, part, {
+          x,
+          y: settings.trim,
+          actualWidth: part.width,
+          actualHeight: part.length,
+          width: part.width + settings.kerf,
+          height: part.length + settings.kerf,
+          rotated: false,
+          scoreShortSide: 0,
+          scoreLongSide: 0,
+          scoreArea: 0,
+        });
+        x += part.width + settings.kerf;
+      }
+    }
+
+    return sheet;
+  });
+}
+
+function packFullLengthStripsAggressive(instances, material, settings, upperBound) {
+  if (settings.optimizationMode !== "aggressive") return null;
+  const groups = groupStripInstances(instances, settings);
+  if (!groups) return null;
+
+  const capacity = settings.boardWidth - settings.trim * 2 + settings.kerf;
+  const patterns = solveStripPatterns(groups, capacity, upperBound);
+  if (!patterns) return null;
+
+  return buildStripSheetsFromPatterns(patterns, groups, material, settings);
 }
 
 function canFitEmptySheet(part, settings) {
@@ -627,6 +815,22 @@ export function optimizeCutting(rawParts, rawSettings = {}) {
       }
     }
 
+    const aggressiveSheets = packFullLengthStripsAggressive(
+      materialInstances,
+      material,
+      settings,
+      bestSheets ? bestSheets.length : Number.POSITIVE_INFINITY,
+    );
+    if (
+      aggressiveSheets &&
+      (!bestSheets ||
+        aggressiveSheets.length < bestSheets.length ||
+        (aggressiveSheets.length === bestSheets.length &&
+          packingTieBreakScore(aggressiveSheets) > packingTieBreakScore(bestSheets)))
+    ) {
+      bestSheets = aggressiveSheets;
+    }
+
     sheetsByMaterial.set(material, bestSheets || []);
   }
 
@@ -757,7 +961,8 @@ export function optimizeCutting(rawParts, rawSettings = {}) {
       edgeBandOrderMeters,
       integrityOk: auditIssues.length === 0,
       auditIssues,
-      strategyCount: strategies.length,
+      strategyCount:
+        strategies.length + (settings.optimizationMode === "aggressive" ? 1 : 0),
       leftoverCount: sheets.reduce((sum, sheet) => sum + sheet.leftovers.length, 0),
       leftoverArea: sheets.reduce((sum, sheet) => sum + sheet.leftoverArea, 0),
       discardArea: Math.max(
