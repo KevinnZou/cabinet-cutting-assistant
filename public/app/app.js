@@ -548,7 +548,9 @@ function updateRuleSummary() {
       ? "极限省板"
       : settings.optimizationMode === "save"
         ? "省板优先"
-        : "当前算法";
+        : settings.optimizationMode === "balanced"
+          ? "通用矩形"
+          : "柜体长条";
   elements.ruleSummary.textContent = `标准板 ${settings.boardWidth} × ${settings.boardHeight} mm · 锯缝 ${settings.kerf} mm · 修边 ${settings.trim} mm · ${modeLabel}`;
 }
 
@@ -1719,7 +1721,9 @@ async function calculate() {
       ? "正在极限省板…"
       : settings.optimizationMode === "save"
         ? "正在省板优化…"
-        : "正在比较排版方案…";
+        : settings.optimizationMode === "balanced"
+          ? "正在比较排版方案…"
+          : "正在长条凑宽…";
   elements.calculateButton.querySelector("span").textContent = calculatingText;
 
   try {
