@@ -49,6 +49,9 @@ test("项目中心提供搜索、状态、版本历史和整库备份", async ()
   ]);
 
   assert.match(html, /id="project-center-button"/);
+  assert.match(html, /id="quick-new-project-button"/);
+  assert.match(html, /新建项目/);
+  assert.match(html, /这里管理不同客户\/订单/);
   assert.match(html, /id="project-search"/);
   assert.match(html, /id="project-status"/);
   assert.match(html, /id="history-dialog"/);
@@ -56,6 +59,20 @@ test("项目中心提供搜索、状态、版本历史和整库备份", async ()
   assert.match(script, /createSnapshot\(state, reason\)/);
   assert.match(script, /restoreSnapshot\(state, row\.dataset\.snapshotId\)/);
   assert.match(script, /importWorkspace\(await file\.text\(\)\)/);
+  assert.match(script, /quick-new-project-button/);
+});
+
+test("应用提供浏览器标签页图标并更新缓存版本", async () => {
+  const [html, icon] = await Promise.all([
+    readFile(new URL("../public/app/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../public/app/favicon.svg", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(html, /rel="icon"/);
+  assert.match(html, /favicon\.svg\?v=20260809-1/);
+  assert.match(html, /app\.js\?v=20260809-1/);
+  assert.match(icon, /#14271e/);
+  assert.match(icon, /#c5ec56/);
 });
 
 test("报价工作台支持价格档案、余料归属和两类专用单据", async () => {
@@ -95,7 +112,7 @@ test("板件复核表支持逐行查看原文和字段判断来源", async () =>
     readFile(new URL("../public/app/parser.js", import.meta.url), "utf8"),
   ]);
 
-  assert.match(html, /20260730-2/);
+  assert.match(html, /20260809-1/);
   assert.match(script, /data-action="toggle-source"/);
   assert.match(script, /原文明确/);
   assert.match(script, /上下文继承/);
