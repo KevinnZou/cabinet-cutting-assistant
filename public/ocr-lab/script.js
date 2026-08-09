@@ -1,4 +1,4 @@
-import { parsePartsText } from "../app/parser.js?v=20260809-1";
+import { parsePartsText } from "../app/parser.js?v=20260809-2";
 
 const OCR_SPACE_ENDPOINT = "https://api.ocr.space/parse/image";
 const OCR_SPACE_DEMO_KEY = "helloworld";
