@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#14271e" />
+    <title>OCR 测试台｜柜体板开料计算助手</title>
+    <link rel="icon" type="image/svg+xml" href="../app/favicon.svg?v=20260809-1" />
+    <link rel="stylesheet" href="./style.css?v=20260809-1" />
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="../app/">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span><strong>OCR 测试台</strong><small>Engine compare</small></span>
+      </a>
+      <nav>
+        <a href="../app/">返回开料助手</a>
+        <a href="../intro/">产品介绍</a>
+      </nav>
+    </header>
+
+    <main class="page">
+      <section class="hero">
+        <div>
+          <span>先测试，再接入正式流程</span>
+          <h1>用真实开料单，对比 OCR 识别效果</h1>
+          <p>上传同一张图片，分别测试 PaddleOCR 本地识别、Tesseract 本地识别和当前 OCR.space 接口。识别文字会自动送进现有语义解析器，方便判断哪套更适合柜体板清单。</p>
+        </div>
+        <label class="upload-card">
+          <input id="image-input" type="file" accept="image/*" />
+          <strong>上传开料单图片</strong>
+          <small>建议用你平时客户发来的真实照片测试，越真实越有参考价值。</small>
+        </label>
+      </section>
+
+      <section class="workspace">
+        <aside class="preview-panel">
+          <div class="panel-head">
+            <h2>图片预览</h2>
+            <button id="clear-button" type="button">清空</button>
+          </div>
+          <div class="preview-box" id="preview-box">
+            <span>上传图片后显示预览</span>
+          </div>
+          <div class="options">
+            <label><input id="preprocess-toggle" type="checkbox" checked /> 自动增强对比度和灰度</label>
+            <label><input id="append-toggle" type="checkbox" /> 保留上次结果</label>
+          </div>
+          <button class="run-button" id="run-all-button" type="button" disabled>开始测试三套 OCR</button>
+          <p class="note">PaddleOCR 和 Tesseract 在浏览器本地运行，首次加载模型会慢一些；OCR.space 会把图片发送到第三方服务。</p>
+        </aside>
+
+        <section class="results" id="results">
+          <article class="engine-card empty">
+            <h3>等待上传</h3>
+            <p>选择一张图片后点击测试，结果会显示在这里。</p>
+          </article>
+        </section>
+      </section>
+    </main>
+
+    <template id="engine-template">
+      <article class="engine-card">
+        <div class="engine-head">
+          <div>
+            <h3></h3>
+            <p></p>
+          </div>
+          <span class="status">等待</span>
+        </div>
+        <div class="metrics"></div>
+        <textarea readonly></textarea>
+        <div class="parse-result"></div>
+      </article>
+    </template>
+
+    <script type="module" src="./script.js?v=20260809-1"></script>
+  </body>
+</html>
