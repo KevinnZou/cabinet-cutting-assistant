@@ -39,6 +39,7 @@ let selectedFile = null;
 let selectedDataUrl = "";
 let preparedDataUrl = "";
 let paddleReady = null;
+let paddleOcr = null;
 
 function loadScript(src, globalCheck) {
   return new Promise((resolve, reject) => {
@@ -52,37 +53,6 @@ function loadScript(src, globalCheck) {
     script.onload = () => resolve();
     script.onerror = () => reject(new Error(`无法加载 ${src}`));
     document.head.appendChild(script);
-  });
-}
-
-async function loadScriptFromAny(sources, globalCheck) {
-  const errors = [];
-  for (const src of sources) {
-    try {
-      await loadScript(src, globalCheck);
-      if (!globalCheck || globalCheck()) return src;
-      errors.push(`${src} 加载后没有检测到目标对象`);
-    } catch (error) {
-      errors.push(error?.message || String(error));
-    }
-  }
-  throw new Error(errors.join("\n"));
-}
-
-async function waitForOpenCv() {
-  if (window.cv?.Mat) return;
-  await new Promise((resolve, reject) => {
-    const timer = window.setTimeout(() => reject(new Error("OpenCV 初始化超时")), 15000);
-    const previous = window.cv?.onRuntimeInitialized;
-    if (window.cv) {
-      window.cv.onRuntimeInitialized = () => {
-        window.clearTimeout(timer);
-        previous?.();
-        resolve();
-      };
-    } else {
-      reject(new Error("OpenCV 脚本未暴露 window.cv"));
-    }
   });
 }
 
@@ -203,30 +173,20 @@ function extractPaddleText(result) {
 async function initPaddle() {
   if (paddleReady) return paddleReady;
   paddleReady = (async () => {
-    await loadScriptFromAny([
-      "https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js",
-      "https://unpkg.com/onnxruntime-web/dist/ort.min.js",
-    ], () => window.ort);
-    await loadScriptFromAny([
-      "https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.10.0-release.1/dist/opencv.js",
-      "https://unpkg.com/@techstark/opencv-js@4.10.0-release.1/dist/opencv.js",
-      "https://docs.opencv.org/4.8.0/opencv.js",
-    ], () => window.cv);
-    await waitForOpenCv();
-    await loadScriptFromAny([
-      "https://cdn.jsdelivr.net/npm/paddleocr-browser/dist/index.js",
-      "https://unpkg.com/paddleocr-browser/dist/index.js",
-    ], () => window.Paddle);
-    if (!window.Paddle?.init || !window.Paddle?.ocr) throw new Error("PaddleOCR 浏览器包没有暴露 Paddle.init/Paddle.ocr");
-    const assetsPath = "https://cdn.jsdelivr.net/npm/paddleocr-browser/dist/";
-    const dictionary = await fetch(`${assetsPath}ppocr_keys_v1.txt`).then((response) => response.text());
-    await window.Paddle.init({
-      detPath: `${assetsPath}ppocr_det.onnx`,
-      recPath: `${assetsPath}ppocr_rec.onnx`,
-      dic: dictionary,
-      ort: window.ort,
-      node: false,
-      cv: window.cv,
+    const module = await import("https://esm.sh/@paddleocr/paddleocr-js@0.4.2");
+    if (!module?.PaddleOCR?.create) {
+      throw new Error("官方 PaddleOCR.js 包没有暴露 PaddleOCR.create");
+    }
+    paddleOcr = await module.PaddleOCR.create({
+      lang: "ch",
+      ocrVersion: "PP-OCRv5",
+      worker: true,
+      ortOptions: {
+        backend: "wasm",
+        wasmPaths: "https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/",
+        numThreads: 2,
+        simd: true,
+      },
     });
   })();
   return paddleReady;
@@ -234,8 +194,12 @@ async function initPaddle() {
 
 async function runPaddle(dataUrl) {
   await initPaddle();
-  const result = await window.Paddle.ocr(dataUrl);
-  return normalizeOcrText(extractPaddleText(result));
+  const blob = await fetch(dataUrl).then((response) => response.blob());
+  const [result] = await paddleOcr.predict(blob, {
+    textDetLimitSideLen: 1600,
+    textRecScoreThresh: 0.35,
+  });
+  return normalizeOcrText((result?.items || []).map((item) => item.text).join("\n"));
 }
 
 async function runTesseract(dataUrl, progress) {
