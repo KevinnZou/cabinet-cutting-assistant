@@ -6,7 +6,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   edgeLoss: 3,
   allowRotation: true,
   roundEdgeBand: true,
-  optimizationMode: "balanced",
+  optimizationMode: "cabinet",
   materialRules: {},
 });
 
@@ -23,7 +23,7 @@ function clamp(value, min, max) {
 }
 
 const EDGE_MODE_PATTERN = /^(?:[012])\/(?:[012])$/;
-const OPTIMIZATION_MODES = new Set(["balanced", "save", "aggressive"]);
+const OPTIMIZATION_MODES = new Set(["cabinet", "balanced", "save", "aggressive"]);
 
 export function normalizeMaterialRules(input = {}) {
   if (!input || typeof input !== "object" || Array.isArray(input)) return {};
@@ -454,7 +454,11 @@ function getSortStrategies(settings) {
     : SORT_STRATEGIES;
 }
 
-const AGGRESSIVE_SEARCH_DEADLINE_MS = 1800;
+const STRIP_SEARCH_DEADLINES = Object.freeze({
+  cabinet: 3000,
+  save: 3000,
+  aggressive: 5000,
+});
 const AGGRESSIVE_MAX_STRIP_TYPES = 12;
 const AGGRESSIVE_MAX_PATTERNS = 12000;
 
@@ -552,7 +556,7 @@ function remainingAreaLowerBound(remainingCounts, groups, capacity) {
   return Math.ceil(remainingWidth / capacity);
 }
 
-function solveStripPatterns(groups, capacity, upperBound) {
+function solveStripPatterns(groups, capacity, upperBound, deadlineMs) {
   if (!groups.length || groups.length > AGGRESSIVE_MAX_STRIP_TYPES) return null;
 
   const patterns = generateStripPatterns(groups, capacity);
@@ -565,7 +569,7 @@ function solveStripPatterns(groups, capacity, upperBound) {
   const memo = new Map();
 
   function search(remaining, chosen) {
-    if (Date.now() - start > AGGRESSIVE_SEARCH_DEADLINE_MS) return;
+    if (Date.now() - start > deadlineMs) return;
     if (remaining.every((count) => count === 0)) {
       if (chosen.length < bestCount) {
         best = chosen;
@@ -592,7 +596,7 @@ function solveStripPatterns(groups, capacity, upperBound) {
     for (const pattern of candidates) {
       const nextRemaining = remaining.map((count, index) => count - pattern.counts[index]);
       search(nextRemaining, [...chosen, pattern]);
-      if (Date.now() - start > AGGRESSIVE_SEARCH_DEADLINE_MS) return;
+      if (Date.now() - start > deadlineMs) return;
     }
   }
 
@@ -630,13 +634,14 @@ function buildStripSheetsFromPatterns(patterns, groups, material, settings) {
   });
 }
 
-function packFullLengthStripsAggressive(instances, material, settings, upperBound) {
-  if (settings.optimizationMode !== "aggressive") return null;
+function packFullLengthStripsOptimized(instances, material, settings, upperBound) {
+  const deadlineMs = STRIP_SEARCH_DEADLINES[settings.optimizationMode];
+  if (!deadlineMs) return null;
   const groups = groupStripInstances(instances, settings);
   if (!groups) return null;
 
   const capacity = settings.boardWidth - settings.trim * 2 + settings.kerf;
-  const patterns = solveStripPatterns(groups, capacity, upperBound);
+  const patterns = solveStripPatterns(groups, capacity, upperBound, deadlineMs);
   if (!patterns) return null;
 
   return buildStripSheetsFromPatterns(patterns, groups, material, settings);
@@ -815,20 +820,20 @@ export function optimizeCutting(rawParts, rawSettings = {}) {
       }
     }
 
-    const aggressiveSheets = packFullLengthStripsAggressive(
+    const stripOptimizedSheets = packFullLengthStripsOptimized(
       materialInstances,
       material,
       settings,
       bestSheets ? bestSheets.length : Number.POSITIVE_INFINITY,
     );
     if (
-      aggressiveSheets &&
+      stripOptimizedSheets &&
       (!bestSheets ||
-        aggressiveSheets.length < bestSheets.length ||
-        (aggressiveSheets.length === bestSheets.length &&
-          packingTieBreakScore(aggressiveSheets) > packingTieBreakScore(bestSheets)))
+        stripOptimizedSheets.length < bestSheets.length ||
+        (stripOptimizedSheets.length === bestSheets.length &&
+          packingTieBreakScore(stripOptimizedSheets) > packingTieBreakScore(bestSheets)))
     ) {
-      bestSheets = aggressiveSheets;
+      bestSheets = stripOptimizedSheets;
     }
 
     sheetsByMaterial.set(material, bestSheets || []);
@@ -962,7 +967,7 @@ export function optimizeCutting(rawParts, rawSettings = {}) {
       integrityOk: auditIssues.length === 0,
       auditIssues,
       strategyCount:
-        strategies.length + (settings.optimizationMode === "aggressive" ? 1 : 0),
+        strategies.length + (STRIP_SEARCH_DEADLINES[settings.optimizationMode] ? 1 : 0),
       leftoverCount: sheets.reduce((sum, sheet) => sum + sheet.leftovers.length, 0),
       leftoverArea: sheets.reduce((sum, sheet) => sum + sheet.leftoverArea, 0),
       discardArea: Math.max(
