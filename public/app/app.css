@@ -89,6 +89,8 @@ button { color: inherit; }
 .topbar-actions { display: flex; align-items: center; gap: 20px; }
 .quiet-button { padding: 0; border: 0; color: #d9e2dc; background: transparent; cursor: pointer; font-size: 13px; }
 .quiet-button:hover { color: var(--lime); }
+.quiet-button.accent { padding: 8px 12px; border: 1px solid rgba(197,236,86,.36); border-radius: 999px; color: var(--forest); background: var(--lime); font-weight: 800; }
+.quiet-button.accent:hover { color: var(--forest); background: #d5f36e; }
 .local-badge { display: inline-flex; align-items: center; gap: 8px; color: #cbd6ce; font-size: 13px; }
 .local-badge i { width: 7px; height: 7px; border-radius: 50%; background: var(--lime); box-shadow: 0 0 0 5px rgba(197,236,86,.1); }
 .quiet-link { color: white; font-size: 13px; text-decoration: none; border-bottom: 1px solid rgba(255,255,255,.35); padding-bottom: 2px; }
@@ -770,6 +772,9 @@ label em { color: #9aa49e; font-style: normal; font-weight: 500; }
 .dialog-head h2 { margin: 4px 0 0; font-size: 22px; }
 .dialog-head p { margin: 5px 0 0; color: var(--ink-soft); font-size: 10px; }
 .dialog-close { width: 34px; height: 34px; border: 0; border-radius: 9px; color: #66736b; background: #f1f4f1; cursor: pointer; font-size: 20px; }
+.project-center-guide { margin: 14px 18px 0; padding: 11px 13px; display: grid; gap: 4px; border: 1px solid #dfe8cf; border-radius: 10px; color: #314338; background: #f5fae9; }
+.project-center-guide strong { font-size: 11px; }
+.project-center-guide span { color: #68786e; font-size: 10px; line-height: 1.6; }
 .project-center-toolbar { padding: 13px 18px; display: grid; grid-template-columns: auto 1fr 150px; gap: 9px; border-bottom: 1px solid var(--line); background: #f8faf7; }
 .project-center-toolbar input, .project-center-toolbar select { min-width: 0; height: 39px; border: 1px solid var(--line); border-radius: 8px; padding: 0 10px; color: var(--ink); background: white; font-size: 11px; }
 .project-list, .history-list { max-height: 510px; overflow: auto; display: grid; }
