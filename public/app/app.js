@@ -543,7 +543,12 @@ function renderSettings() {
 
 function updateRuleSummary() {
   const settings = normalizeSettings(state.settings);
-  const modeLabel = settings.optimizationMode === "save" ? "省板优先" : "当前算法";
+  const modeLabel =
+    settings.optimizationMode === "aggressive"
+      ? "极限省板"
+      : settings.optimizationMode === "save"
+        ? "省板优先"
+        : "当前算法";
   elements.ruleSummary.textContent = `标准板 ${settings.boardWidth} × ${settings.boardHeight} mm · 锯缝 ${settings.kerf} mm · 修边 ${settings.trim} mm · ${modeLabel}`;
 }
 
@@ -1709,8 +1714,13 @@ async function calculate() {
 
   const settings = normalizeSettings(state.settings);
   elements.calculateButton.disabled = true;
-  elements.calculateButton.querySelector("span").textContent =
-    settings.optimizationMode === "save" ? "正在省板优化…" : "正在比较排版方案…";
+  const calculatingText =
+    settings.optimizationMode === "aggressive"
+      ? "正在极限省板…"
+      : settings.optimizationMode === "save"
+        ? "正在省板优化…"
+        : "正在比较排版方案…";
+  elements.calculateButton.querySelector("span").textContent = calculatingText;
 
   try {
     const result = await runOptimizationInWorker(state.parts, {
