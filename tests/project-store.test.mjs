@@ -31,6 +31,7 @@ test("项目工作区支持复制并保持原项目数据隔离", () => {
   assert.notEqual(copy.id, source.id);
   assert.equal(copy.projectName, "项目A - 副本");
   assert.equal(copy.status, "draft");
+  assert.equal(workspace.openProjectIds[0], copy.id);
   copy.parts[0].quantity = 99;
   assert.equal(source.parts[0].quantity, 14);
 });
@@ -57,6 +58,20 @@ test("整库备份恢复项目、价格档案和当前项目", () => {
 
   assert.equal(restored.version, 3);
   assert.equal(restored.activeProjectId, workspace.activeProjectId);
+  assert.deepEqual(restored.openProjectIds, workspace.openProjectIds);
   assert.equal(restored.projects[0].customer.name, "张先生");
   assert.deepEqual(restored.priceBook.materialPrices["皓月白"], { cost: 120, sale: 160 });
+});
+
+test("工作区记录已打开项目标签并从旧数据自动补齐", () => {
+  const workspace = createWorkspace(fixture());
+  assert.deepEqual(workspace.openProjectIds, [workspace.activeProjectId]);
+
+  const restored = importWorkspace({
+    version: 3,
+    activeProjectId: workspace.activeProjectId,
+    projects: workspace.projects,
+  });
+
+  assert.deepEqual(restored.openProjectIds, [workspace.activeProjectId]);
 });

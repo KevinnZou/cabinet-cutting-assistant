@@ -2,6 +2,8 @@ import { parsePartsText } from "../app/parser.js?v=20260809-2";
 
 const OCR_SPACE_ENDPOINT = "https://api.ocr.space/parse/image";
 const OCR_SPACE_DEMO_KEY = "helloworld";
+const PADDLE_OCR_MODULE_URL = "https://cdn.jsdelivr.net/npm/@paddleocr/paddleocr-js@0.4.2/+esm";
+const ONNXRUNTIME_WASM_PATH = "https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/";
 
 const engines = [
   {
@@ -150,17 +152,66 @@ function normalizeOcrText(value) {
     .replace(/\r/g, "")
     .replace(/[|｜]/g, " ")
     .replace(/[×Ｘｘ＊]/g, "x")
+    .replace(/单四/g, "单边")
+    .replace(/(\d+)\s*分/g, "$1公分")
     .replace(/[，,;；、]+/g, " ")
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
 
+function itemBounds(item) {
+  const points = Array.isArray(item?.poly) ? item.poly : [];
+  const xs = points.map((point) => Number(point?.[0])).filter(Number.isFinite);
+  const ys = points.map((point) => Number(point?.[1])).filter(Number.isFinite);
+  if (!xs.length || !ys.length) return { x: 0, y: 0, height: 24 };
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  return {
+    x: Math.min(...xs),
+    y: (minY + maxY) / 2,
+    height: Math.max(12, maxY - minY),
+  };
+}
+
+function paddleItemsToText(items = []) {
+  const rows = [];
+  for (const item of items.filter((entry) => String(entry?.text || entry?.rec_text || "").trim())) {
+    const bounds = itemBounds(item);
+    const row = rows.find((candidate) =>
+      Math.abs(candidate.y - bounds.y) <= Math.max(candidate.height, bounds.height) * 0.38,
+    );
+    if (row) {
+      row.items.push({ item, bounds });
+      row.y = (row.y * (row.items.length - 1) + bounds.y) / row.items.length;
+      row.height = Math.max(row.height, bounds.height);
+    } else {
+      rows.push({ y: bounds.y, height: bounds.height, items: [{ item, bounds }] });
+    }
+  }
+  return rows
+    .sort((a, b) => a.y - b.y)
+    .map((row) =>
+      row.items
+        .sort((a, b) => a.bounds.x - b.bounds.x)
+        .map(({ item }) => item.text || item.rec_text || "")
+        .join(" "),
+    )
+    .join("\n");
+}
+
 function extractPaddleText(result) {
   if (typeof result === "string") return result;
   if (Array.isArray(result)) {
     return result
-      .map((item) => item?.text || item?.rec_text || item?.[1]?.[0] || item?.[0] || "")
+      .map((item) =>
+        item?.text ||
+        item?.rec_text ||
+        (Array.isArray(item?.items) ? paddleItemsToText(item.items) : "") ||
+        item?.[1]?.[0] ||
+        item?.[0] ||
+        "",
+      )
       .filter(Boolean)
       .join("\n");
   }
@@ -173,19 +224,19 @@ function extractPaddleText(result) {
 async function initPaddle() {
   if (paddleReady) return paddleReady;
   paddleReady = (async () => {
-    const module = await import("https://esm.sh/@paddleocr/paddleocr-js@0.4.2");
-    if (!module?.PaddleOCR?.create) {
+    const module = await import(PADDLE_OCR_MODULE_URL);
+    const factory = module?.PaddleOCR?.create || module?.default?.PaddleOCR?.create;
+    if (!factory) {
       throw new Error("官方 PaddleOCR.js 包没有暴露 PaddleOCR.create");
     }
-    paddleOcr = await module.PaddleOCR.create({
-      lang: "ch",
-      ocrVersion: "PP-OCRv5",
-      worker: true,
+    paddleOcr = await factory({
+      ocrVersion: "PP-OCRv6",
+      worker: false,
       ortOptions: {
         backend: "wasm",
-        wasmPaths: "https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/",
-        numThreads: 2,
-        simd: true,
+        wasmPaths: ONNXRUNTIME_WASM_PATH,
+        numThreads: 1,
+        simd: false,
       },
     });
   })();
@@ -196,10 +247,10 @@ async function runPaddle(dataUrl) {
   await initPaddle();
   const blob = await fetch(dataUrl).then((response) => response.blob());
   const [result] = await paddleOcr.predict(blob, {
-    textDetLimitSideLen: 1600,
-    textRecScoreThresh: 0.35,
+    textDetLimitSideLen: 2200,
+    textRecScoreThresh: 0.2,
   });
-  return normalizeOcrText((result?.items || []).map((item) => item.text).join("\n"));
+  return normalizeOcrText(paddleItemsToText(result?.items || []));
 }
 
 async function runTesseract(dataUrl, progress) {

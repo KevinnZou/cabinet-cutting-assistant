@@ -9,8 +9,8 @@
     />
     <meta name="theme-color" content="#14271e" />
     <title>开料工作台｜柜体板开料计算助手</title>
-    <link rel="icon" type="image/svg+xml" href="./favicon.svg?v=20260809-2" />
-    <link rel="stylesheet" href="./app.css?v=20260809-2" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg?v=20260810-1" />
+    <link rel="stylesheet" href="./app.css?v=20260810-1" />
   </head>
   <body>
     <header class="topbar">
@@ -26,11 +26,16 @@
     </header>
 
     <main class="page-shell">
+      <nav class="project-tabs" aria-label="打开的项目">
+        <div class="project-tab-list" id="project-tabs" role="tablist"></div>
+        <button class="project-tab-new" id="tab-new-project-button" type="button" aria-label="新建项目标签">＋</button>
+      </nav>
+
       <section class="workspace-head" aria-labelledby="page-title">
-        <div>
+        <div class="workspace-intro">
           <span class="section-kicker">LOCAL CUTTING WORKSPACE</span>
-          <h1 id="page-title">把板件清单，变成可执行的排版结果</h1>
-          <p>直接粘贴客户清单、报价单文字或 OCR 结果，先自动解析成板件表，再按本厂规则计算板材张数、封边用量和排版位置。</p>
+          <h1 id="page-title">开料工作台</h1>
+          <p>粘贴清单或上传图片，复核板件后直接计算板材、封边和排版。</p>
         </div>
         <div class="project-tools" aria-label="当前项目">
           <div class="project-tools-head">
@@ -100,9 +105,8 @@
                 <button class="button subtle ocr-button" id="ocr-button" type="button">
                   <span>上传图片 OCR</span>
                 </button>
-                <a class="ocr-lab-link" href="../ocr-lab/" target="_blank" rel="noreferrer">测试新版 OCR</a>
                 <input id="ocr-file" type="file" accept="image/*" hidden />
-                <small id="ocr-status">当前按钮仍使用 OCR.Space；新版识别能力可先在测试台对比。</small>
+                <small id="ocr-status">优先使用本地 PaddleOCR；加载失败时自动改用 OCR.Space。</small>
               </div>
             </div>
             <textarea
@@ -458,6 +462,6 @@
       </div>
     </dialog>
 
-    <script type="module" src="./app.js?v=20260809-2"></script>
+    <script type="module" src="./app.js?v=20260810-1"></script>
   </body>
 </html>

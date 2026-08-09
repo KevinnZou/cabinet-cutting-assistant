@@ -174,7 +174,7 @@ function parseSize(line) {
   }
 
   const singleStrip = line.match(/(?:^|[^\d.])(\d+(?:\.\d+)?)\s*(mm|毫米|cm|厘米|公分)?(?=\s*(?:单边|双边|封边|长边|短边|不封|免封|\d+\s*(?:片|块|件|个|pcs?|p|张)))/i);
-  if (singleStrip && (singleStrip[2] || hasCountInstruction(line) || hasEdgeInstruction(line))) {
+  if (singleStrip && (singleStrip[2] || hasEdgeInstruction(line))) {
     return {
       length: DEFAULT_PARSE_OPTIONS.defaultStripLength,
       width: normalizeDimensionUnit(singleStrip[1], singleStrip[2]),

@@ -15,6 +15,22 @@ function now() {
   return new Date().toISOString();
 }
 
+function normalizeOpenProjectIds(workspace) {
+  const availableIds = new Set(
+    (workspace.projects || [])
+      .filter((project) => !project.deletedAt)
+      .map((project) => project.id),
+  );
+  const activeId = availableIds.has(workspace.activeProjectId)
+    ? workspace.activeProjectId
+    : [...availableIds][0] || "";
+  const openIds = [
+    activeId,
+    ...(Array.isArray(workspace.openProjectIds) ? workspace.openProjectIds : []),
+  ].filter((id, index, ids) => id && availableIds.has(id) && ids.indexOf(id) === index);
+  return openIds.length ? openIds : activeId ? [activeId] : [];
+}
+
 export function createProjectRecord(project, overrides = {}) {
   const timestamp = now();
   return {
@@ -59,6 +75,7 @@ export function createWorkspace(initialProject) {
   return {
     version: 3,
     activeProjectId: project.id,
+    openProjectIds: [project.id],
     projects: [project],
     priceBook: {
       version: 1,
@@ -91,6 +108,7 @@ export function loadWorkspace(initialProject) {
         if (!parsed.projects.some((project) => project.id === parsed.activeProjectId)) {
           parsed.activeProjectId = parsed.projects.find((project) => !project.deletedAt)?.id || "";
         }
+        parsed.openProjectIds = normalizeOpenProjectIds(parsed);
         return parsed;
       }
     }
@@ -112,6 +130,7 @@ export function loadWorkspace(initialProject) {
 
 export function persistWorkspace(workspace) {
   workspace.updatedAt = now();
+  workspace.openProjectIds = normalizeOpenProjectIds(workspace);
   localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(workspace));
 }
 
@@ -183,6 +202,7 @@ export function duplicateProject(workspace, projectId) {
   });
   workspace.projects.unshift(copy);
   workspace.activeProjectId = copy.id;
+  workspace.openProjectIds = [copy.id, ...normalizeOpenProjectIds(workspace)];
   return copy;
 }
 
@@ -208,6 +228,7 @@ export function importWorkspace(content) {
     ...workspace,
     version: 3,
     projects: workspace.projects.map((project) => createProjectRecord(project)),
+    openProjectIds: normalizeOpenProjectIds(workspace),
   };
 }
 

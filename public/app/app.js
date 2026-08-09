@@ -34,6 +34,8 @@ import {
 
 const OCR_SPACE_ENDPOINT = "https://api.ocr.space/parse/image";
 const OCR_SPACE_DEMO_KEY = "helloworld";
+const PADDLE_OCR_MODULE_URL = "https://cdn.jsdelivr.net/npm/@paddleocr/paddleocr-js@0.4.2/+esm";
+const ONNXRUNTIME_WASM_PATH = "https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/";
 const COLOR_PALETTE = ["#c5ec56", "#93c6a8", "#f0bc62", "#8fb8e8", "#d6a6e8", "#e7987f", "#aabf77"];
 const EDGE_PRESETS = [
   { value: "1/0", label: "单边", edgeLong: 1, edgeShort: 0 },
@@ -116,6 +118,8 @@ const elements = {
   historyList: document.getElementById("history-list"),
   priceBookDialog: document.getElementById("price-book-dialog"),
   workspaceFile: document.getElementById("workspace-file"),
+  projectTabs: document.getElementById("project-tabs"),
+  tabNewProjectButton: document.getElementById("tab-new-project-button"),
 };
 
 function makeId() {
@@ -208,6 +212,8 @@ let saveTimer = null;
 let toastTimer = null;
 let calculationWorker = null;
 let selectedPartIds = new Set();
+let paddleReady = null;
+let paddleOcr = null;
 
 function escapeHtml(value) {
   return String(value)
@@ -234,6 +240,81 @@ function setOcrStatus(message) {
   if (elements.ocrStatus) elements.ocrStatus.textContent = message;
 }
 
+function normalizeOcrText(value) {
+  return String(value || "")
+    .replace(/\r/g, "")
+    .replace(/[|｜]/g, " ")
+    .replace(/[×Ｘｘ＊]/g, "x")
+    .replace(/单四/g, "单边")
+    .replace(/(\d+)\s*分/g, "$1公分")
+    .replace(/[，,;；、]+/g, " ")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function itemBounds(item) {
+  const points = Array.isArray(item?.poly) ? item.poly : [];
+  const xs = points.map((point) => Number(point?.[0])).filter(Number.isFinite);
+  const ys = points.map((point) => Number(point?.[1])).filter(Number.isFinite);
+  if (!xs.length || !ys.length) return { x: 0, y: 0, height: 24 };
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  return {
+    x: Math.min(...xs),
+    y: (minY + maxY) / 2,
+    height: Math.max(12, maxY - minY),
+  };
+}
+
+function paddleItemsToText(items = []) {
+  const rows = [];
+  for (const item of items.filter((entry) => String(entry?.text || entry?.rec_text || "").trim())) {
+    const bounds = itemBounds(item);
+    const row = rows.find((candidate) =>
+      Math.abs(candidate.y - bounds.y) <= Math.max(candidate.height, bounds.height) * 0.38,
+    );
+    if (row) {
+      row.items.push({ item, bounds });
+      row.y = (row.y * (row.items.length - 1) + bounds.y) / row.items.length;
+      row.height = Math.max(row.height, bounds.height);
+    } else {
+      rows.push({ y: bounds.y, height: bounds.height, items: [{ item, bounds }] });
+    }
+  }
+  return rows
+    .sort((a, b) => a.y - b.y)
+    .map((row) =>
+      row.items
+        .sort((a, b) => a.bounds.x - b.bounds.x)
+        .map(({ item }) => item.text || item.rec_text || "")
+        .join(" "),
+    )
+    .join("\n");
+}
+
+function extractPaddleText(result) {
+  if (typeof result === "string") return result;
+  if (Array.isArray(result)) {
+    return result
+      .map((item) =>
+        item?.text ||
+        item?.rec_text ||
+        (Array.isArray(item?.items) ? paddleItemsToText(item.items) : "") ||
+        item?.[1]?.[0] ||
+        item?.[0] ||
+        "",
+      )
+      .filter(Boolean)
+      .join("\n");
+  }
+  if (Array.isArray(result?.items)) return result.items.map((item) => item.text || item.rec_text || "").join("\n");
+  if (Array.isArray(result?.textBlocks)) return result.textBlocks.map((item) => item.text || "").join("\n");
+  if (Array.isArray(result?.data)) return extractPaddleText(result.data);
+  if (Array.isArray(result?.result)) return extractPaddleText(result.result);
+  return "";
+}
+
 function appendRawInput(text) {
   const cleanText = text.trim();
   if (!cleanText) return;
@@ -252,6 +333,7 @@ function saveState({ immediate = false } = {}) {
       state = upsertProject(workspace, state);
       persistWorkspace(workspace);
       elements.saveStatus.textContent = "已保存到本机";
+      renderProjectTabs();
     } catch {
       elements.saveStatus.textContent = "浏览器阻止了本地保存";
     }
@@ -259,6 +341,58 @@ function saveState({ immediate = false } = {}) {
 
   if (immediate) persist();
   else saveTimer = setTimeout(persist, 320);
+}
+
+function activeProjectIds() {
+  return new Set(
+    workspace.projects
+      .filter((project) => !project.deletedAt)
+      .map((project) => project.id),
+  );
+}
+
+function normalizeOpenProjectIds() {
+  const availableIds = activeProjectIds();
+  const activeId = availableIds.has(state.id) ? state.id : workspace.activeProjectId;
+  workspace.openProjectIds = [
+    activeId,
+    ...(Array.isArray(workspace.openProjectIds) ? workspace.openProjectIds : []),
+  ].filter((id, index, ids) => id && availableIds.has(id) && ids.indexOf(id) === index);
+  if (!workspace.openProjectIds.length) {
+    const next = workspace.projects.find((project) => !project.deletedAt);
+    if (next) workspace.openProjectIds = [next.id];
+  }
+}
+
+function openProjectTab(projectId) {
+  const project = workspace.projects.find((item) => item.id === projectId && !item.deletedAt);
+  if (!project) return;
+  normalizeOpenProjectIds();
+  workspace.openProjectIds = [
+    projectId,
+    ...workspace.openProjectIds.filter((id) => id !== projectId),
+  ];
+}
+
+function renderProjectTabs() {
+  if (!elements.projectTabs) return;
+  normalizeOpenProjectIds();
+  const openProjects = workspace.openProjectIds
+    .map((projectId) => workspace.projects.find((project) => project.id === projectId && !project.deletedAt))
+    .filter(Boolean);
+  elements.projectTabs.innerHTML = openProjects
+    .map((project) => {
+      const pieceCount = (project.parts || []).reduce((sum, part) => sum + Math.max(0, Number(part.quantity) || 0), 0);
+      return `
+        <div class="project-tab ${project.id === state.id ? "is-active" : ""}" data-project-tab="${escapeHtml(project.id)}" role="tab" aria-selected="${project.id === state.id ? "true" : "false"}" tabindex="0">
+          <span class="project-tab-main">
+            <strong>${escapeHtml(project.projectName || "未命名项目")}</strong>
+            <span>${escapeHtml(project.customer?.name || "未填写客户")} · ${project.parts?.length || 0} 种 / ${pieceCount} 片</span>
+          </span>
+          <button class="project-tab-close" data-project-tab-close="${escapeHtml(project.id)}" type="button" aria-label="关闭 ${escapeHtml(project.projectName || "项目")}">×</button>
+        </div>`;
+    })
+    .join("");
 }
 
 function saveSnapshot(reason) {
@@ -274,12 +408,40 @@ function switchProject(projectId) {
   );
   if (!project) return;
   saveState({ immediate: true });
+  openProjectTab(project.id);
   workspace.activeProjectId = project.id;
   state = hydrateProject(project);
   selectedPartIds.clear();
   lastResult = null;
   lastQuotation = null;
   renderAll();
+  persistWorkspace(workspace);
+}
+
+function closeProjectTab(projectId) {
+  normalizeOpenProjectIds();
+  if (workspace.openProjectIds.length <= 1) {
+    showToast("至少保留一个打开的项目");
+    return;
+  }
+  saveState({ immediate: true });
+  const closingActive = projectId === state.id;
+  const currentIndex = workspace.openProjectIds.indexOf(projectId);
+  workspace.openProjectIds = workspace.openProjectIds.filter((id) => id !== projectId);
+  if (closingActive) {
+    const nextId = workspace.openProjectIds[Math.max(0, currentIndex - 1)] || workspace.openProjectIds[0];
+    const nextProject = workspace.projects.find((project) => project.id === nextId && !project.deletedAt);
+    if (nextProject) {
+      workspace.activeProjectId = nextProject.id;
+      state = hydrateProject(nextProject);
+      selectedPartIds.clear();
+      lastResult = null;
+      lastQuotation = null;
+      renderAll();
+    }
+  } else {
+    renderProjectTabs();
+  }
   persistWorkspace(workspace);
 }
 
@@ -756,36 +918,20 @@ async function recognizeImage(file) {
     return;
   }
 
-  const formData = new FormData();
-  formData.append("file", file);
-  formData.append("apikey", OCR_SPACE_DEMO_KEY);
-  formData.append("language", "chs");
-  formData.append("OCREngine", "2");
-  formData.append("scale", "true");
-  formData.append("detectOrientation", "true");
-  formData.append("isOverlayRequired", "false");
-
   elements.ocrButton.disabled = true;
-  elements.ocrButton.textContent = "正在识别…";
-  setOcrStatus("正在上传图片到 OCR.Space 免费接口识别，请稍等。");
+  elements.ocrButton.textContent = "正在识别...";
+  setOcrStatus("正在加载本地 PaddleOCR 模型，首次会慢一些。");
 
   try {
-    const response = await fetch(OCR_SPACE_ENDPOINT, {
-      method: "POST",
-      body: formData,
-    });
-    if (!response.ok) throw new Error(`OCR request failed: ${response.status}`);
-    const payload = await response.json();
-    const errors = [
-      ...(Array.isArray(payload.ErrorMessage) ? payload.ErrorMessage : payload.ErrorMessage ? [payload.ErrorMessage] : []),
-      ...(Array.isArray(payload.ErrorDetails) ? payload.ErrorDetails : payload.ErrorDetails ? [payload.ErrorDetails] : []),
-    ].filter(Boolean);
-    if (payload.IsErroredOnProcessing || errors.length) throw new Error(errors.join("；") || "OCR processing failed");
+    let text = "";
+    try {
+      text = await runPaddleOcr(file);
+      setOcrStatus("PaddleOCR 本地识别完成，可继续点击“解析到确认表”。");
+    } catch (paddleError) {
+      setOcrStatus(`PaddleOCR 加载失败，已切换到 OCR.Space：${paddleError.message || "未知错误"}`);
+      text = await runOcrSpace(file);
+    }
 
-    const text = (payload.ParsedResults || [])
-      .map((result) => result.ParsedText || "")
-      .join("\n")
-      .trim();
     if (!text) {
       setOcrStatus("没有识别到文字，可以换一张更清晰、正向的图片再试。");
       showToast("OCR 未识别到文字");
@@ -800,9 +946,61 @@ async function recognizeImage(file) {
     showToast("OCR 识别失败，请稍后再试");
   } finally {
     elements.ocrButton.disabled = false;
-    elements.ocrButton.textContent = "上传图片识别";
+    elements.ocrButton.textContent = "上传图片 OCR";
     elements.ocrFile.value = "";
   }
+}
+
+async function initPaddleOcr() {
+  if (paddleReady) return paddleReady;
+  paddleReady = (async () => {
+    const module = await import(PADDLE_OCR_MODULE_URL);
+    const factory = module?.PaddleOCR?.create || module?.default?.PaddleOCR?.create;
+    if (!factory) throw new Error("PaddleOCR.js 模块没有暴露 PaddleOCR.create");
+    paddleOcr = await factory({
+      ocrVersion: "PP-OCRv6",
+      worker: false,
+      ortOptions: {
+        backend: "wasm",
+        wasmPaths: ONNXRUNTIME_WASM_PATH,
+        numThreads: 1,
+        simd: false,
+      },
+    });
+  })();
+  return paddleReady;
+}
+
+async function runPaddleOcr(file) {
+  await initPaddleOcr();
+  const result = await paddleOcr.predict(file, {
+    textDetLimitSideLen: 2200,
+    textRecScoreThresh: 0.2,
+  });
+  return normalizeOcrText(extractPaddleText(result));
+}
+
+async function runOcrSpace(file) {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("apikey", OCR_SPACE_DEMO_KEY);
+  formData.append("language", "chs");
+  formData.append("OCREngine", "2");
+  formData.append("scale", "true");
+  formData.append("detectOrientation", "true");
+  formData.append("isOverlayRequired", "false");
+  const response = await fetch(OCR_SPACE_ENDPOINT, {
+    method: "POST",
+    body: formData,
+  });
+  if (!response.ok) throw new Error(`OCR request failed: ${response.status}`);
+  const payload = await response.json();
+  const errors = [
+    ...(Array.isArray(payload.ErrorMessage) ? payload.ErrorMessage : payload.ErrorMessage ? [payload.ErrorMessage] : []),
+    ...(Array.isArray(payload.ErrorDetails) ? payload.ErrorDetails : payload.ErrorDetails ? [payload.ErrorDetails] : []),
+  ].filter(Boolean);
+  if (payload.IsErroredOnProcessing || errors.length) throw new Error(errors.join("；") || "OCR processing failed");
+  return normalizeOcrText((payload.ParsedResults || []).map((result) => result.ParsedText || "").join("\n"));
 }
 
 function updateStateFromPartInput(target) {
@@ -983,7 +1181,7 @@ function renderProjectList() {
                 ${isTrash
                   ? `<button class="mini-action" data-project-action="restore" type="button">恢复</button>`
                   : `
-                    <button class="mini-action" data-project-action="open" type="button">打开</button>
+                    <button class="mini-action" data-project-action="open" type="button">${workspace.openProjectIds?.includes(project.id) ? "切换" : "打开标签"}</button>
                     <button class="mini-action" data-project-action="duplicate" type="button">复制</button>
                     <button class="mini-action" data-project-action="archive" type="button">${project.status === "archived" ? "取消归档" : "归档"}</button>
                     <button class="mini-action danger" data-project-action="trash" type="button">删除</button>
@@ -1038,6 +1236,7 @@ function createNewProject(overrides = {}) {
   const project = createProjectRecord(initial);
   workspace.projects.unshift(project);
   workspace.activeProjectId = project.id;
+  openProjectTab(project.id);
   persistWorkspace(workspace);
   state = hydrateProject(project);
   selectedPartIds.clear();
@@ -1071,6 +1270,7 @@ function handleProjectAction(projectId, action) {
     project.status = project.status === "archived" ? "draft" : "archived";
   } else if (action === "trash") {
     project.deletedAt = new Date().toISOString();
+    workspace.openProjectIds = (workspace.openProjectIds || []).filter((id) => id !== project.id);
     if (project.id === state.id) {
       let next = workspace.projects.find((item) => !item.deletedAt && item.id !== project.id);
       if (!next) {
@@ -1078,6 +1278,7 @@ function handleProjectAction(projectId, action) {
         workspace.projects.unshift(next);
       }
       workspace.activeProjectId = next.id;
+      openProjectTab(next.id);
       state = hydrateProject(next);
       renderAll();
     }
@@ -1087,6 +1288,7 @@ function handleProjectAction(projectId, action) {
   }
   project.updatedAt = new Date().toISOString();
   persistWorkspace(workspace);
+  renderProjectTabs();
   renderProjectList();
 }
 
@@ -1947,6 +2149,7 @@ async function importAllData(file) {
 }
 
 function renderAll() {
+  renderProjectTabs();
   elements.projectName.value = state.projectName;
   elements.customerName.value = state.customer?.name || "";
   elements.customerPhone.value = state.customer?.phone || "";
@@ -1992,7 +2195,7 @@ document.getElementById("clear-raw-button").addEventListener("click", () => {
   elements.rawInput.value = "";
   elements.parseFeedback.textContent = "粘贴后点击解析，系统会先生成可编辑清单。";
   elements.parseFeedback.classList.remove("has-warning");
-  setOcrStatus("使用 OCR.Space 免费接口，图片会发送到第三方服务。");
+  setOcrStatus("优先使用本地 PaddleOCR；加载失败时自动改用 OCR.Space。");
   elements.rawInput.focus();
 });
 
@@ -2137,6 +2340,24 @@ document.getElementById("project-center-button").addEventListener("click", () =>
   elements.projectCenterDialog.showModal();
 });
 document.getElementById("quick-new-project-button").addEventListener("click", openNewProjectDialog);
+elements.tabNewProjectButton?.addEventListener("click", openNewProjectDialog);
+elements.projectTabs?.addEventListener("click", (event) => {
+  const closeTarget = event.target.closest("[data-project-tab-close]");
+  if (closeTarget) {
+    event.stopPropagation();
+    closeProjectTab(closeTarget.dataset.projectTabClose);
+    return;
+  }
+  const tab = event.target.closest("[data-project-tab]");
+  if (tab && tab.dataset.projectTab !== state.id) switchProject(tab.dataset.projectTab);
+});
+elements.projectTabs?.addEventListener("keydown", (event) => {
+  if (!["Enter", " "].includes(event.key)) return;
+  const tab = event.target.closest("[data-project-tab]");
+  if (!tab || tab.dataset.projectTab === state.id) return;
+  event.preventDefault();
+  switchProject(tab.dataset.projectTab);
+});
 document.getElementById("price-book-button").addEventListener("click", () => {
   renderPriceBook();
   elements.priceBookDialog.showModal();

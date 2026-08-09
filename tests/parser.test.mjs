@@ -179,6 +179,13 @@ test("支持只写一个公分尺寸的条子料口语清单", () => {
   assert.equal(result.stats.pieceCount, 250);
 });
 
+test("只有数量没有尺寸时不误判为单尺寸条子料", () => {
+  const result = parsePartsText("背板 19片");
+
+  assert.equal(result.parts.length, 0);
+  assert.equal(result.warnings.length, 1);
+});
+
 test("支持同一行连续写多个条子料规格", () => {
   const result = parsePartsText("60公分单边40片 56公分单边100片 55公分单边60片 35公分单边30片 60公分双边20片");
 
