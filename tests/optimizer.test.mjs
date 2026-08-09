@@ -207,6 +207,25 @@ test("省板优先模式会比较更多排版策略且默认模式保持不变",
   assert.equal(save.totals.integrityOk, true);
 });
 
+test("极限省板模式会对整长条做凑宽搜索", () => {
+  const parts = [
+    { id: "strip-55", name: "55公分", material: "闫墨", length: 2440, width: 550, quantity: 40, edgeLong: 1, grainLocked: true },
+    { id: "strip-60", name: "60公分", material: "闫墨", length: 2440, width: 600, quantity: 40, edgeLong: 1, grainLocked: true },
+    { id: "strip-30", name: "30公分", material: "闫墨", length: 2440, width: 300, quantity: 24, edgeLong: 1, grainLocked: true },
+    { id: "strip-35", name: "35公分", material: "闫墨", length: 2440, width: 350, quantity: 22, edgeLong: 1, grainLocked: true },
+    { id: "strip-8", name: "8公分", material: "闫墨", length: 2440, width: 80, quantity: 9, edgeLong: 2, grainLocked: true },
+  ];
+  const balanced = optimizeCutting(parts, { kerf: 3 });
+  const aggressive = optimizeCutting(parts, { kerf: 3, optimizationMode: "aggressive" });
+
+  assert.equal(balanced.totals.sheetCount, 54);
+  assert.equal(aggressive.settings.optimizationMode, "aggressive");
+  assert.equal(aggressive.totals.sheetCount, 52);
+  assert.equal(aggressive.totals.placedPartCount, 135);
+  assert.equal(aggressive.totals.integrityOk, true);
+  assert.ok(aggressive.totals.strategyCount > balanced.totals.strategyCount);
+});
+
 test("未知排版策略会回落到当前算法", () => {
   const result = optimizeCutting([], { optimizationMode: "unknown" });
 
