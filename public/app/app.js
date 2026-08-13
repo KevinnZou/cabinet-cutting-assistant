@@ -6,7 +6,7 @@ import {
   normalizeSettings,
   optimizeCutting,
 } from "./optimizer.js";
-import { createParserExampleByType, parsePartsText } from "./parser.js?v=20260809-2";
+import { createParserExampleByType, parsePartsText } from "./parser.js?v=20260813-1";
 import {
   createCalculationBaseline,
   createProductionVersion,
@@ -31,6 +31,7 @@ import {
   createQuoteVersion,
   normalizePriceBook,
 } from "./pricing.js";
+import { extractPaddleText, normalizeOcrText } from "./ocr-utils.js?v=20260813-1";
 
 const OCR_SPACE_ENDPOINT = "https://api.ocr.space/parse/image";
 const OCR_SPACE_DEMO_KEY = "helloworld";
@@ -238,81 +239,6 @@ function showToast(message) {
 
 function setOcrStatus(message) {
   if (elements.ocrStatus) elements.ocrStatus.textContent = message;
-}
-
-function normalizeOcrText(value) {
-  return String(value || "")
-    .replace(/\r/g, "")
-    .replace(/[|｜]/g, " ")
-    .replace(/[×Ｘｘ＊]/g, "x")
-    .replace(/单四/g, "单边")
-    .replace(/(\d+)\s*分/g, "$1公分")
-    .replace(/[，,;；、]+/g, " ")
-    .replace(/[ \t]+\n/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
-function itemBounds(item) {
-  const points = Array.isArray(item?.poly) ? item.poly : [];
-  const xs = points.map((point) => Number(point?.[0])).filter(Number.isFinite);
-  const ys = points.map((point) => Number(point?.[1])).filter(Number.isFinite);
-  if (!xs.length || !ys.length) return { x: 0, y: 0, height: 24 };
-  const minY = Math.min(...ys);
-  const maxY = Math.max(...ys);
-  return {
-    x: Math.min(...xs),
-    y: (minY + maxY) / 2,
-    height: Math.max(12, maxY - minY),
-  };
-}
-
-function paddleItemsToText(items = []) {
-  const rows = [];
-  for (const item of items.filter((entry) => String(entry?.text || entry?.rec_text || "").trim())) {
-    const bounds = itemBounds(item);
-    const row = rows.find((candidate) =>
-      Math.abs(candidate.y - bounds.y) <= Math.max(candidate.height, bounds.height) * 0.38,
-    );
-    if (row) {
-      row.items.push({ item, bounds });
-      row.y = (row.y * (row.items.length - 1) + bounds.y) / row.items.length;
-      row.height = Math.max(row.height, bounds.height);
-    } else {
-      rows.push({ y: bounds.y, height: bounds.height, items: [{ item, bounds }] });
-    }
-  }
-  return rows
-    .sort((a, b) => a.y - b.y)
-    .map((row) =>
-      row.items
-        .sort((a, b) => a.bounds.x - b.bounds.x)
-        .map(({ item }) => item.text || item.rec_text || "")
-        .join(" "),
-    )
-    .join("\n");
-}
-
-function extractPaddleText(result) {
-  if (typeof result === "string") return result;
-  if (Array.isArray(result)) {
-    return result
-      .map((item) =>
-        item?.text ||
-        item?.rec_text ||
-        (Array.isArray(item?.items) ? paddleItemsToText(item.items) : "") ||
-        item?.[1]?.[0] ||
-        item?.[0] ||
-        "",
-      )
-      .filter(Boolean)
-      .join("\n");
-  }
-  if (Array.isArray(result?.items)) return result.items.map((item) => item.text || item.rec_text || "").join("\n");
-  if (Array.isArray(result?.textBlocks)) return result.textBlocks.map((item) => item.text || "").join("\n");
-  if (Array.isArray(result?.data)) return extractPaddleText(result.data);
-  if (Array.isArray(result?.result)) return extractPaddleText(result.result);
-  return "";
 }
 
 function appendRawInput(text) {

@@ -6,18 +6,20 @@ const DEFAULT_PARSE_OPTIONS = Object.freeze({
 });
 const DIMENSION_UNIT_PATTERN = "(?:mm|毫米|cm|厘米|公分|m|米)?";
 const NUMBER_PATTERN = "\\d+(?:\\.\\d+)?";
+const COUNT_UNIT_PATTERN = "(?:片|块|件|个|条|根|支|pcs?|pc|p|张)";
 const SIZE_TOKEN_PATTERN = new RegExp(
-  `${NUMBER_PATTERN}\\s*${DIMENSION_UNIT_PATTERN}\\s*[x*]\\s*${NUMBER_PATTERN}\\s*${DIMENSION_UNIT_PATTERN}(?:\\s*(?:=|[x*])\\s*\\d+\\s*(?:片|块|件|个|pcs?|张)?)?`,
+  `${NUMBER_PATTERN}\\s*${DIMENSION_UNIT_PATTERN}\\s*[x*]\\s*${NUMBER_PATTERN}\\s*${DIMENSION_UNIT_PATTERN}(?:\\s*(?:=|[x*])\\s*\\d+\\s*${COUNT_UNIT_PATTERN}?)?`,
   "i",
 );
 const STRIP_EQUALS_TOKEN_PATTERN = new RegExp(
-  `${NUMBER_PATTERN}\\s*${DIMENSION_UNIT_PATTERN}\\s*=\\s*\\d+\\s*(?:片|块|件|个|pcs?|p|张)?`,
+  `${NUMBER_PATTERN}\\s*${DIMENSION_UNIT_PATTERN}\\s*=\\s*\\d+\\s*${COUNT_UNIT_PATTERN}?`,
   "i",
 );
-const EDGE_TOKEN_PATTERN = "(?:单边|双边|四边|四周|全封边|封单边|封双边|双长边?|双短边?|单长边|单短边|一长一短|两长一短|两短一长|不封边|不封|免封边|免封)";
+const EDGE_TOKEN_PATTERN = "(?:单边|单面封边|单面封|单面|双边|四边|四周|全封边|封单边|封双边|双长边?|双短边?|单长边|单短边|一长一短|两长一短|两短一长|不封边|不封|免封边|免封)";
 const MATERIAL_SUFFIX_PATTERN = "(?:白|灰|黑|胡桃|橡木|科技木|柚木|榆|杉|木纹|纯色|免漆|免漆板|生态板|颗粒板|多层板|欧松板|饰面|花色|板材)";
+const MATERIAL_TOKEN_PATTERN = "(?:[\\u4e00-\\u9fa5A-Za-z0-9·\\-]{1,18}(?:免漆板|生态板|颗粒板|多层板|欧松板|饰面板|板材|免漆|胡桃|橡木|科技木|柚木|白|灰|黑)|免漆板|生态板|颗粒板|多层板|欧松板|饰面板|板材|免漆)";
 const SINGLE_STRIP_TOKEN_PATTERN = new RegExp(
-  `(?:${NUMBER_PATTERN}\\s*(?:mm|毫米|cm|厘米|公分)\\s*(?:${EDGE_TOKEN_PATTERN}\\s*)?\\d+\\s*(?:片|块|件|个|pcs?|p|张)(?:\\s*${EDGE_TOKEN_PATTERN})?|${NUMBER_PATTERN}\\s*${EDGE_TOKEN_PATTERN}\\s*\\d+\\s*(?:片|块|件|个|pcs?|p|张))`,
+  `(?:${NUMBER_PATTERN}\\s*(?:mm|毫米|cm|厘米|公分)(?:\\s*的?\\s*${MATERIAL_TOKEN_PATTERN})?\\s*(?:${EDGE_TOKEN_PATTERN}\\s*)?\\d+\\s*${COUNT_UNIT_PATTERN}(?:\\s*${EDGE_TOKEN_PATTERN})?|${NUMBER_PATTERN}\\s*${EDGE_TOKEN_PATTERN}\\s*\\d+\\s*${COUNT_UNIT_PATTERN})`,
   "i",
 );
 const NAME_STOP_WORDS = new Set([
@@ -30,6 +32,9 @@ const NAME_STOP_WORDS = new Set([
   "件",
   "片",
   "块",
+  "条",
+  "根",
+  "支",
   "张",
   "封边",
   "木纹",
@@ -37,17 +42,29 @@ const NAME_STOP_WORDS = new Set([
   "横纹",
   "竖纹",
   "备注",
+  "的",
 ]);
 
 function cleanText(value) {
   return String(value || "")
     .replace(/\u00a0/g, " ")
+    .replace(/\t/g, " ")
     .replace(/[：]/g, ":")
     .replace(/[，；、]/g, " ")
     .replace(/[×Ｘｘ]/g, "x")
+    .replace(/[＊]/g, "*")
+    .replace(/[=＝]/g, "=")
     .replace(/[（）]/g, (char) => (char === "（" ? "(" : ")"))
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function stripLeadingSerial(line) {
+  return cleanText(line).replace(/^\d{1,4}\s*[.)、．-]?\s+(?=\S)/, "");
+}
+
+function isSameAsPreviousToken(value) {
+  return /^(?:同上|同前|同|上同|ditto|same)$/i.test(cleanText(value));
 }
 
 function toNumber(value, fallback = 0) {
@@ -92,31 +109,54 @@ function normalizeCompactDimensions(lengthValue, lengthUnit, widthValue, widthUn
   };
 }
 
+function normalizeMaterialValue(value, currentMaterial = "") {
+  const material = cleanText(value)
+    .replace(/^(?:颜色|色号|材质|板材|饰面|花色)\s*[:=]?\s*/i, "")
+    .replace(/[。.]$/, "");
+  if (!material || isSameAsPreviousToken(material)) return currentMaterial || "未分类";
+  return material;
+}
+
+function extractMaterialToken(value) {
+  const materialSource = cleanText(value).replace(
+    new RegExp(`^${NUMBER_PATTERN}\\s*(?:mm|毫米|cm|厘米|公分|m|米)\\s*的?\\s*`, "i"),
+    "",
+  );
+  const matches = [...materialSource.matchAll(new RegExp(MATERIAL_TOKEN_PATTERN, "gi"))];
+  return matches.length ? matches[matches.length - 1][0] : "";
+}
+
 function parseCount(line) {
-  const sizeEqualsCount = line.match(/\b\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|公分|m|米)?\s*[x*]\s*\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|公分|m|米)?\s*(?:=|@|\/)\s*(\d+)\s*(?:片|块|件|个|pcs?|p|张)?/i);
+  const sizeEqualsCount = line.match(new RegExp(`\\b\\d+(?:\\.\\d+)?\\s*(?:mm|毫米|cm|厘米|公分|m|米)?\\s*[x*]\\s*\\d+(?:\\.\\d+)?\\s*(?:mm|毫米|cm|厘米|公分|m|米)?\\s*(?:=|@|/)\\s*(\\d+)\\s*${COUNT_UNIT_PATTERN}?`, "i"));
   if (sizeEqualsCount) return Math.max(1, Math.floor(toNumber(sizeEqualsCount[1], 1)));
 
-  const sizeParenCount = line.match(/\b\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|公分|m|米)?\s*[x*]\s*\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|公分|m|米)?\s*(?:\(\s*(\d+)\s*(?:片|块|件|个|pcs?|p|张)?\s*\)|(\d+)\s*(?:片|块|件|个|pcs?|p|张))/i);
+  const sizeParenCount = line.match(new RegExp(`\\b\\d+(?:\\.\\d+)?\\s*(?:mm|毫米|cm|厘米|公分|m|米)?\\s*[x*]\\s*\\d+(?:\\.\\d+)?\\s*(?:mm|毫米|cm|厘米|公分|m|米)?\\s*(?:\\(\\s*(\\d+)\\s*${COUNT_UNIT_PATTERN}?\\s*\\)|(\\d+)\\s*${COUNT_UNIT_PATTERN})`, "i"));
   if (sizeParenCount) return Math.max(1, Math.floor(toNumber(sizeParenCount[1] || sizeParenCount[2], 1)));
 
-  const equalCount = line.match(/(?:^|[:=\s])\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|公分)?\s*=\s*(\d+)\s*(?:片|块|件|个|pcs?|张)?/i);
+  const bareCountAfterSize = line.match(/\b\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|公分|m|米)?\s*[x*]\s*\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|公分|m|米)?\s+(\d+)(?=$|[^\d.])/i);
+  if (bareCountAfterSize) return Math.max(1, Math.floor(toNumber(bareCountAfterSize[1], 1)));
+
+  const equalCount = line.match(new RegExp(`(?:^|[:=\\s])\\d+(?:\\.\\d+)?\\s*(?:mm|毫米|cm|厘米|公分)?\\s*=\\s*(\\d+)\\s*${COUNT_UNIT_PATTERN}?`, "i"));
   if (equalCount) return Math.max(1, Math.floor(toNumber(equalCount[1], 1)));
 
-  const afterSize = line.match(/\b\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|公分|m|米)?\s*x\s*\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|公分|m|米)?\s*(?:x|×|\*)\s*(\d+)\s*(?:片|块|件|个|pcs?|张)?/i);
+  const afterSize = line.match(new RegExp(`\\b\\d+(?:\\.\\d+)?\\s*(?:mm|毫米|cm|厘米|公分|m|米)?\\s*x\\s*\\d+(?:\\.\\d+)?\\s*(?:mm|毫米|cm|厘米|公分|m|米)?\\s*(?:x|×|\\*)\\s*(\\d+)\\s*${COUNT_UNIT_PATTERN}?`, "i"));
   if (afterSize) return Math.max(1, Math.floor(toNumber(afterSize[1], 1)));
 
-  const tableTriplet = line.match(/(?:^|[^\d.])\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|公分|m|米)?\s+\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|公分|m|米)?\s+(\d+)\s*(?:片|块|件|个|pcs?|张)?(?:$|[^\d.])/i);
+  const tableTriplet = line.match(new RegExp(`(?:^|[^\\d.])\\d+(?:\\.\\d+)?\\s*(?:mm|毫米|cm|厘米|公分|m|米)?\\s+\\d+(?:\\.\\d+)?\\s*(?:mm|毫米|cm|厘米|公分|m|米)?\\s+(\\d+)\\s*${COUNT_UNIT_PATTERN}?(?:$|[^\\d.])`, "i"));
   if (tableTriplet) return Math.max(1, Math.floor(toNumber(tableTriplet[1], 1)));
 
-  const explicit = line.match(/(?:数量|数|qty|q|共)\s*[:=]?\s*(\d+)\s*(?:片|块|件|个|pcs?|张)?/i);
+  const explicit = line.match(new RegExp(`(?:数量|数|qty|q|共)\\s*[:=]?\\s*(\\d+)\\s*${COUNT_UNIT_PATTERN}?`, "i"));
   if (explicit) return Math.max(1, Math.floor(toNumber(explicit[1], 1)));
 
-  const unitCount = line.match(/(?:^|[^\d.])(\d+)\s*(?:片|块|件|个|pcs|pc|张)/i);
+  const barePiece = line.match(/(?:^|[^\d.])(\d+)\s*(?:p|P)(?:$|[^\d.])/);
+  if (barePiece) return Math.max(1, Math.floor(toNumber(barePiece[1], 1)));
+
+  const unitCount = line.match(new RegExp(`(?:^|[^\\d.])(\\d+)\\s*${COUNT_UNIT_PATTERN}`, "i"));
   return unitCount ? Math.max(1, Math.floor(toNumber(unitCount[1], 1))) : 1;
 }
 
 function hasCountInstruction(line) {
-  return /(?:(?:=|@|\/)\s*\d+\s*(?:片|块|件|个|pcs?|p|张)?|\b(?:数量|数|qty|q|共)\s*[:=]?\s*\d+|\d+\s*(?:片|块|件|个|pcs?|p|张)|\d+\s*[x*]\s*\d+\s*[x*]\s*\d+|\(\s*\d+\s*\))/i.test(line);
+  return new RegExp(`(?:(?:=|@|/)\\s*\\d+\\s*${COUNT_UNIT_PATTERN}?|\\b(?:数量|数|qty|q|共)\\s*[:=]?\\s*\\d+|\\d+\\s*${COUNT_UNIT_PATTERN}|\\d+\\s*[pP](?:$|[^\\d.])|\\d+\\s*[x*]\\s*\\d+\\s+\\d+(?:$|[^\\d.])|\\d+\\s*[x*]\\s*\\d+\\s*[x*]\\s*\\d+|\\(\\s*\\d+\\s*\\))`, "i").test(line);
 }
 
 function parseSize(line) {
@@ -153,7 +193,7 @@ function parseSize(line) {
     };
   }
 
-  const tableTriplet = line.match(/(?:^|[^\d.])(\d+(?:\.\d+)?)\s*(mm|毫米|cm|厘米|公分|m|米)?\s+(\d+(?:\.\d+)?)\s*(mm|毫米|cm|厘米|公分|m|米)?\s+\d+\s*(?:片|块|件|个|pcs?|张)?(?:$|[^\d.])/i);
+  const tableTriplet = line.match(new RegExp(`(?:^|[^\\d.])(\\d+(?:\\.\\d+)?)\\s*(mm|毫米|cm|厘米|公分|m|米)?\\s+(\\d+(?:\\.\\d+)?)\\s*(mm|毫米|cm|厘米|公分|m|米)?\\s+\\d+\\s*${COUNT_UNIT_PATTERN}?(?:$|[^\\d.])`, "i"));
   if (tableTriplet) {
     const size = normalizeCompactDimensions(tableTriplet[1], tableTriplet[2], tableTriplet[3], tableTriplet[4]);
     return {
@@ -163,7 +203,7 @@ function parseSize(line) {
     };
   }
 
-  const strip = line.match(/(?:^|[:=\s])(\d+(?:\.\d+)?)\s*(mm|毫米|cm|厘米|公分)?\s*=\s*\d+\s*(?:片|块|件|个|pcs?|张)?/i);
+  const strip = line.match(new RegExp(`(?:^|[:=\\s])(\\d+(?:\\.\\d+)?)\\s*(mm|毫米|cm|厘米|公分)?\\s*=\\s*\\d+\\s*${COUNT_UNIT_PATTERN}?`, "i"));
   if (strip) {
     return {
       length: DEFAULT_PARSE_OPTIONS.defaultStripLength,
@@ -173,7 +213,7 @@ function parseSize(line) {
     };
   }
 
-  const singleStrip = line.match(/(?:^|[^\d.])(\d+(?:\.\d+)?)\s*(mm|毫米|cm|厘米|公分)?(?=\s*(?:单边|双边|封边|长边|短边|不封|免封|\d+\s*(?:片|块|件|个|pcs?|p|张)))/i);
+  const singleStrip = line.match(new RegExp(`(?:^|[^\\d.])(\\d+(?:\\.\\d+)?)\\s*(mm|毫米|cm|厘米|公分)?(?=\\s*(?:的?\\s*${MATERIAL_TOKEN_PATTERN}|单边|双边|封边|长边|短边|不封|免封|\\d+\\s*${COUNT_UNIT_PATTERN}))`, "i"));
   if (singleStrip && (singleStrip[2] || hasEdgeInstruction(line))) {
     return {
       length: DEFAULT_PARSE_OPTIONS.defaultStripLength,
@@ -183,28 +223,95 @@ function parseSize(line) {
     };
   }
 
+  const edgeFirstStrip = line.match(/(?:单边|双边|单面封边|单面封|单面|封单边|封双边)\s*(\d+(?:\.\d+)?)\s*(mm|毫米|cm|厘米|公分)/i);
+  if (edgeFirstStrip) {
+    return {
+      length: DEFAULT_PARSE_OPTIONS.defaultStripLength,
+      width: normalizeDimensionUnit(edgeFirstStrip[1], edgeFirstStrip[2]),
+      raw: edgeFirstStrip[0],
+      kind: "strip",
+    };
+  }
+
+  return null;
+}
+
+function parseTableRow(line, currentMaterial = "") {
+  const cleaned = stripLeadingSerial(line);
+  const columns = cleaned.split(/\s+/).filter(Boolean);
+  if (columns.length < 5) return null;
+
+  const numericColumns = columns
+    .map((value, index) => ({
+      value,
+      index,
+      number: toNumber(value),
+      unit: value.match(/(mm|毫米|cm|厘米|公分|m|米)/i)?.[1] || "",
+    }))
+    .filter((entry) => /^\d+(?:\.\d+)?(?:mm|毫米|cm|厘米|公分|m|米)?$/i.test(entry.value));
+
+  for (let offset = 0; offset <= numericColumns.length - 3; offset += 1) {
+    const [first, second, third] = numericColumns.slice(offset, offset + 3);
+    if (second.index !== first.index + 1 || third.index !== second.index + 1) continue;
+    if (first.number <= 0 || second.number <= 0 || third.number <= 0) continue;
+
+    const size = normalizeCompactDimensions(first.number, first.unit, second.number, second.unit);
+    const quantity = Math.max(1, Math.floor(third.number));
+    const before = columns.slice(0, first.index);
+    const after = columns.slice(third.index + 1);
+    const allTextTokens = [...before, ...after];
+    const explicitMaterialToken = allTextTokens.find((token) =>
+      isSameAsPreviousToken(token) || new RegExp(`^${MATERIAL_TOKEN_PATTERN}$`, "i").test(token),
+    );
+    const material = normalizeMaterialValue(explicitMaterialToken || "", currentMaterial);
+    const nameTokens = before
+      .filter((token) => token !== explicitMaterialToken)
+      .filter((token) => !/^(?:序号|名称|材质|板材|颜色|长|宽|数量|封边)$/.test(token));
+    const trailingNameTokens = after
+      .filter((token) => token !== explicitMaterialToken)
+      .filter((token) => !hasEdgeInstruction(token) && !hasGrainInstruction(token));
+    const name = [...nameTokens, ...trailingNameTokens].join(" ") || "未命名板件";
+
+    return {
+      size: {
+        ...size,
+        raw: columns.slice(first.index, second.index + 1).join(" "),
+        kind: "rectangle",
+      },
+      quantity,
+      material,
+      materialExplicit: Boolean(explicitMaterialToken && !isSameAsPreviousToken(explicitMaterialToken)),
+      name,
+      countExplicit: true,
+    };
+  }
+
   return null;
 }
 
 function parseMaterial(line, currentMaterial = "") {
-  const prefixedSize = line.match(/^([^:=]{2,30})\s*:\s*\d/);
-  if (prefixedSize) return prefixedSize[1].trim();
+  const materialLine = stripLeadingSerial(line);
+  const prefixedSize = materialLine.match(/^([^:=]{2,30})\s*:\s*\d/);
+  if (prefixedSize) return normalizeMaterialValue(prefixedSize[1], currentMaterial);
 
-  const leadingMaterial = line.match(/^([^\d:=]{2,20})\s+(?=\d)/);
+  const leadingMaterial = materialLine.match(/^([^\d:=]{2,20})\s+(?=\d)/);
   if (
     leadingMaterial &&
     new RegExp(`${MATERIAL_SUFFIX_PATTERN}$`, "i").test(leadingMaterial[1].trim())
   ) {
-    return leadingMaterial[1].trim();
+    return normalizeMaterialValue(extractMaterialToken(leadingMaterial[1]) || leadingMaterial[1], currentMaterial);
   }
 
   for (const key of MATERIAL_KEYS) {
-    const match = line.match(new RegExp(`${key}\\s*[:=]?\\s*([^\\s,，;；|/]+)`, "i"));
-    if (match) return match[1].replace(/[。.]$/, "");
+    const match = materialLine.match(new RegExp(`${key}\\s*[:=]?\\s*([^\\s,，;；|/]+)`, "i"));
+    if (match) return normalizeMaterialValue(match[1], currentMaterial);
   }
 
-  const heading = line.match(/^(?:#\s*)?(?:颜色|色号|材质|板材|饰面|花色)\s*[:=\s]\s*(.+)$/i);
-  if (heading) return heading[1].trim();
+  const heading = materialLine.match(/^(?:#\s*)?(?:颜色|色号|材质|板材|饰面|花色)\s*[:=\s]\s*(.+)$/i);
+  if (heading) return normalizeMaterialValue(heading[1], currentMaterial);
+
+  const materialToken = extractMaterialToken(materialLine);
+  if (materialToken) return normalizeMaterialValue(materialToken, currentMaterial);
 
   return currentMaterial || "未分类";
 }
@@ -233,7 +340,7 @@ function parseEdges(line) {
     edgeLong = 2;
   } else if (/(?:单长边|长边\s*1|长\s*1|一条长边|左封|右封|前封|后封)/.test(line)) {
     edgeLong = 1;
-  } else if (/(?:全单边|单边封|封单边|单边|封一边|一边封|都单边|封边\s*[:=]?\s*单边)/.test(line)) {
+  } else if (/(?:全单边|单面封边|单面封|单面|单边封|封单边|单边|封一边|一边封|都单边|封边\s*[:=]?\s*(?:单边|单面))/.test(line)) {
     edgeLong = 1;
   }
 
@@ -269,7 +376,7 @@ function parseEdges(line) {
 }
 
 function hasEdgeInstruction(line) {
-  return /(?:封边|封单边|单边封|全单边|单边|双边封|封双边|全双边|双边|两边封|长条\s*双边|条子\s*双边|线条\s*双边|地脚线.*双边|3边|三边|4边|四边|四周|周边|全封|长边|短边|双长|两长|双短|两短|左右封|上下封|左封|右封|上封|下封|一长一短|长短各一|两长一短|两短一长|门.*四周|不封边|不用封边|无需封边|免封边|不封)/.test(line);
+  return /(?:封边|封单边|单边封|单面封边|单面封|单面|全单边|单边|双边封|封双边|全双边|双边|两边封|长条\s*双边|条子\s*双边|线条\s*双边|地脚线.*双边|3边|三边|4边|四边|四周|周边|全封|长边|短边|双长|两长|双短|两短|左右封|上下封|左封|右封|上封|下封|一长一短|长短各一|两长一短|两短一长|门.*四周|不封边|不用封边|无需封边|免封边|不封)/.test(line);
 }
 
 function hasLeftoverInstruction(line) {
@@ -302,28 +409,34 @@ function hasGrainInstruction(line) {
 }
 
 function hasMaterialInstruction(line) {
-  const leadingLabel = line.match(/^([^\d:=]{2,20})\s+(?=\d)/)?.[1]?.trim();
+  const materialLine = stripLeadingSerial(line);
+  const leadingLabel = materialLine.match(/^([^\d:=]{2,20})\s+(?=\d)/)?.[1]?.trim();
   return (
-    MATERIAL_KEYS.some((key) => new RegExp(`${key}\\s*[:=]?\\s*\\S+`, "i").test(line)) ||
-    /^[^:=]{2,30}\s*:\s*\d/.test(line) ||
-    (Boolean(leadingLabel) &&
-      new RegExp(`${MATERIAL_SUFFIX_PATTERN}$`).test(leadingLabel))
+    MATERIAL_KEYS.some((key) => new RegExp(`${key}\\s*[:=]?\\s*\\S+`, "i").test(materialLine)) ||
+    /^[^:=]{2,30}\s*:\s*\d/.test(materialLine) ||
+    new RegExp(`(?:^|\\s|的)(?:${MATERIAL_TOKEN_PATTERN}|同上|同前|ditto|same)(?=\\s|\\d|$)`, "i").test(materialLine) ||
+    (Boolean(leadingLabel) && Boolean(extractMaterialToken(leadingLabel)))
   );
 }
 
 function parseName(line, sizeRaw) {
-  let nameSource = cleanText(line)
+  const material = parseMaterial(line, "");
+  let nameSource = stripLeadingSerial(line)
+    .replace(material && material !== "未分类" ? material : "", " ")
+    .replace(/的\s*(?:免漆板|生态板|颗粒板|多层板|欧松板|饰面板|板材|免漆)/g, " ")
     .replace(/^[^:=]{2,30}\s*:\s*(?=\d)/, " ")
     .replace(sizeRaw || "", " ")
-    .replace(/(?:数量|数|qty|q|共)\s*[:=]?\s*\d+\s*(?:片|块|件|个|pcs?|张)?/gi, " ")
-    .replace(/(?:^|[^\d.])\d+\s*(?:片|块|件|个|pcs?|张)/gi, " ")
-    .replace(/(?:x|\*)\s*\d+\s*(?:片|块|件|个|pcs?|张)?/gi, " ")
+    .replace(new RegExp(`(?:数量|数|qty|q|共)\\s*[:=]?\\s*\\d+\\s*${COUNT_UNIT_PATTERN}?`, "gi"), " ")
+    .replace(new RegExp(`(?:^|[^\\d.])\\d+\\s*${COUNT_UNIT_PATTERN}`, "gi"), " ")
+    .replace(/(?:^|[^\d.])\d+\s*[pP](?:$|[^\d.])/g, " ")
+    .replace(/\b\d+(?:\.\d+)?\s*[x*]\s*\d+(?:\.\d+)?\s+\d+\b/gi, " ")
+    .replace(new RegExp(`(?:x|\\*)\\s*\\d+\\s*${COUNT_UNIT_PATTERN}?`, "gi"), " ")
     .replace(/(?:颜色|色号|材质|板材|饰面|花色)\s*[:=]?\s*\S+/gi, " ")
     .replace(/(?:封边|封长边|长边封|封短边|短边封)\s*[:=]?\s*[012](?:\s*[/,， ]\s*[012])?/gi, " ")
     .replace(/封边\s*[:=]?\s*(?:四周|四边|4边|四|4|单边|双边|无|没有|不封|0\s*[/,， ]\s*0)/gi, " ")
     .replace(/(?:=|@|\/)\s*\d+\s*(?:片|块|件|个|pcs?|p|张)?/gi, " ")
     .replace(/(?:长边|短边)\s*[:=]?\s*[012]/gi, " ")
-    .replace(/(?:长条\s*双边封|长条\s*封双边|长条\s*双边|条子\s*双边封|条子\s*封双边|条子\s*双边|线条\s*双边封|线条\s*封双边|线条\s*双边|全双边|双边封|封双边|双边|两边封|全单边|单边封|封单边|封一边|一边封|单边|三边封|封三边|3边|三边|四边封|四周封|全封边|封4边|封四边|4边|四边|四周|周边封|全封|双长边?|两长边?|单长边|双短边?|两短边?|单短边|左右封|上下封|左封|右封|上封|下封|一条长边|两条长边|一条短边|两条短边|一长一短|长短各一|两长一短|两短一长|不封边|不用封边|无需封边|免封边|不封|木纹|纹理|顺纹|竖纹|锁纹|方向固定|不可旋转|无纹|不锁|可旋转|自由旋转|横竖可调)/g, " ")
+    .replace(/(?:长条\s*双边封|长条\s*封双边|长条\s*双边|条子\s*双边封|条子\s*封双边|条子\s*双边|线条\s*双边封|线条\s*封双边|线条\s*双边|全双边|双边封|封双边|双边|两边封|全单边|单面封边|单面封|单面|单边封|封单边|封一边|一边封|单边|三边封|封三边|3边|三边|四边封|四周封|全封边|封4边|封四边|4边|四边|四周|周边封|全封|双长边?|两长边?|单长边|双短边?|两短边?|单短边|左右封|上下封|左封|右封|上封|下封|一条长边|两条长边|一条短边|两条短边|一长一短|长短各一|两长一短|两短一长|不封边|不用封边|无需封边|免封边|不封|木纹|纹理|顺纹|竖纹|锁纹|方向固定|不可旋转|无纹|不锁|可旋转|自由旋转|横竖可调)/g, " ")
     .replace(/(?:封边\s*:?|边\s*:)/g, " ")
     .replace(/(?:^|\s)(?:双|单|两条|一条)?(?:长边|短边)(?:$|\s)/g, " ")
     .replace(/[()（）]/g, " ")
@@ -432,7 +545,8 @@ export function parsePartsText(text, options = {}) {
       return;
     }
 
-    const size = parseSize(line);
+    const tableRow = parseTableRow(line, currentMaterial);
+    const size = tableRow?.size || parseSize(line);
     if (!size) {
       if (hasLeftoverInstruction(line)) {
         const prefixedMaterial = line.match(
@@ -484,8 +598,8 @@ export function parsePartsText(text, options = {}) {
       return;
     }
 
-    const materialExplicit = hasMaterialInstruction(line);
-    const material = nextMaterial;
+    const materialExplicit = tableRow?.materialExplicit || hasMaterialInstruction(line);
+    const material = tableRow?.material || nextMaterial;
     if (material && material !== currentMaterial) {
       currentEdges = parseOptions.defaultEdges;
       currentEdgesExplicit = false;
@@ -496,7 +610,7 @@ export function parsePartsText(text, options = {}) {
     if (materialExplicit) currentMaterialSourceLine = sourceLine;
     const parsedEdges = parseEdges(line);
     const edges = parsedEdges.explicit ? parsedEdges : currentEdges || parsedEdges;
-    const parsedName = parseName(line, size.raw);
+    const parsedName = tableRow?.name || parseName(line, size.raw);
     const fallbackName = `板件 ${parts.length - segmentStart + 1}`;
     const usedFallbackName =
       parsedName === "未命名板件" ||
@@ -505,7 +619,7 @@ export function parsePartsText(text, options = {}) {
     const reviewFlags = [];
     if (!material || material === "未分类") reviewFlags.push("颜色待确认");
     if (!parsedEdges.explicit && !currentEdgesExplicit) reviewFlags.push("封边按默认单边");
-    if (!hasCountInstruction(line)) reviewFlags.push("数量按 1 片");
+    if (!(tableRow?.countExplicit || hasCountInstruction(line))) reviewFlags.push("数量按 1 片");
     if (usedFallbackName) reviewFlags.push("板件名待确认");
     if (size.normalizedDirection) reviewFlags.push("尺寸已按长边在前");
     const part = {
@@ -520,7 +634,7 @@ export function parsePartsText(text, options = {}) {
       material,
       length: size.length,
       width: size.width,
-      quantity: parseCount(line),
+      quantity: tableRow?.quantity || parseCount(line),
       grainLocked: parseGrain(line),
       edgeLong: edges.edgeLong,
       edgeShort: edges.edgeShort,
@@ -548,7 +662,7 @@ export function parsePartsText(text, options = {}) {
           size: size.normalizedDirection
             ? { kind: "inferred", sourceLine, note: "已按长边在前自动调换长宽" }
             : { kind: "explicit", sourceLine, note: "原文明确" },
-          quantity: hasCountInstruction(line)
+          quantity: tableRow?.countExplicit || hasCountInstruction(line)
             ? { kind: "explicit", sourceLine, note: "原文明确" }
             : { kind: "default", sourceLine, note: "原文未写数量，按 1 片" },
           edges: parsedEdges.explicit

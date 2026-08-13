@@ -109,6 +109,72 @@ test("支持冒号条子料写法并默认长度 2440", () => {
   assert.equal(result.parts[3].quantity, 24);
 });
 
+test("支持带序号的板材清单、裸数量和单面封边", () => {
+  const result = parsePartsText(`
+1 奶油白免漆板 2440*540 14 卧室衣柜板单面封边
+2 奶油白免漆板 2440*100 2  不封边
+3 奶油白免漆板 2440*390 9  卧室衣柜板单面封边
+4 奶油白免漆板 2440*565 5  卧室衣柜板单面封边
+5 奶油白免漆板 2440*620 4  卧室衣柜板单面封边
+6 奶油白免漆板 2440*350 5  卧室衣柜板单面封边
+7 奶油白免漆板 2440*150 5  卧室衣柜板单面封边
+8 奶油白免漆板 2440*70 4   条子单面封边
+`);
+
+  assert.equal(result.parts.length, 8);
+  assert.equal(result.stats.pieceCount, 48);
+  assert.deepEqual(
+    result.parts.map((part) => [part.material, part.length, part.width, part.quantity, part.edgeLong, part.edgeShort]),
+    [
+      ["奶油白免漆板", 2440, 540, 14, 1, 0],
+      ["奶油白免漆板", 2440, 100, 2, 0, 0],
+      ["奶油白免漆板", 2440, 390, 9, 1, 0],
+      ["奶油白免漆板", 2440, 565, 5, 1, 0],
+      ["奶油白免漆板", 2440, 620, 4, 1, 0],
+      ["奶油白免漆板", 2440, 350, 5, 1, 0],
+      ["奶油白免漆板", 2440, 150, 5, 1, 0],
+      ["奶油白免漆板", 2440, 70, 4, 1, 0],
+    ],
+  );
+  assert.ok(result.parts.every((part) => !part.reviewFlags.includes("颜色待确认")));
+  assert.ok(result.parts.every((part) => !part.reviewFlags.includes("数量按 1 片")));
+});
+
+test("支持材质在名称后或尺寸后的现场清单", () => {
+  const result = parsePartsText(`
+1 卧室侧板 奶油白免漆板 2440*540 14 单面封
+2 2440*100 2 奶油白免漆板 不封
+3 条子 2440*70 4P 奶油白免漆板 单边
+`);
+
+  assert.deepEqual(
+    result.parts.map((part) => [part.name, part.material, part.length, part.width, part.quantity, part.edgeLong, part.edgeShort]),
+    [
+      ["卧室侧板", "奶油白免漆板", 2440, 540, 14, 1, 0],
+      ["板件 2", "奶油白免漆板", 2440, 100, 2, 0, 0],
+      ["条子", "奶油白免漆板", 2440, 70, 4, 1, 0],
+    ],
+  );
+});
+
+test("支持 Excel 表格列、中文列名和同上继承", () => {
+  const result = parsePartsText(`
+序号\t名称\t材质\t长\t宽\t数量\t封边
+1\t侧板\t奶油白免漆板\t2440\t540\t14\t单面
+2\t收口条\t同上\t2440\t100\t2\t不封
+3\t层板\t同上\t760\t520\t4\t四周封
+`);
+
+  assert.deepEqual(
+    result.parts.map((part) => [part.name, part.material, part.length, part.width, part.quantity, part.edgeLong, part.edgeShort]),
+    [
+      ["侧板", "奶油白免漆板", 2440, 540, 14, 1, 0],
+      ["收口条", "奶油白免漆板", 2440, 100, 2, 0, 0],
+      ["层板", "奶油白免漆板", 760, 520, 4, 2, 2],
+    ],
+  );
+});
+
 test("前置全局封边规则会套用到后续板件", () => {
   const result = parsePartsText(`
 材质:卡其灰
@@ -179,11 +245,51 @@ test("支持只写一个公分尺寸的条子料口语清单", () => {
   assert.equal(result.stats.pieceCount, 250);
 });
 
+test("支持公分条子料按条计数和夹材质写法", () => {
+  const result = parsePartsText(`
+55公分的免漆板22条封单边
+40公分的免漆板6条封单边
+15公分的免漆板5条封单边
+7公分的免漆板10条封单边
+4公分的免漆板10条封单边
+`);
+
+  assert.equal(result.parts.length, 5);
+  assert.equal(result.stats.pieceCount, 53);
+  assert.deepEqual(
+    result.parts.map((part) => [part.material, part.length, part.width, part.quantity, part.edgeLong, part.edgeShort]),
+    [
+      ["免漆板", 2440, 550, 22, 1, 0],
+      ["免漆板", 2440, 400, 6, 1, 0],
+      ["免漆板", 2440, 150, 5, 1, 0],
+      ["免漆板", 2440, 70, 10, 1, 0],
+      ["免漆板", 2440, 40, 10, 1, 0],
+    ],
+  );
+  assert.ok(result.parts.every((part) => !part.reviewFlags.includes("数量按 1 片")));
+  assert.deepEqual(result.parts.map((part) => part.name), ["条子 550", "条子 400", "条子 150", "条子 70", "条子 40"]);
+});
+
 test("只有数量没有尺寸时不误判为单尺寸条子料", () => {
   const result = parsePartsText("背板 19片");
 
   assert.equal(result.parts.length, 0);
   assert.equal(result.warnings.length, 1);
+});
+
+test("OCR 数量孤行不强行错配到下一条尺寸", () => {
+  const result = parsePartsText(`
+40片
+单边 60公分
+单边30公分 24片
+`);
+
+  assert.equal(result.parts.length, 2);
+  assert.equal(result.parts[0].width, 600);
+  assert.equal(result.parts[0].quantity, 1);
+  assert.ok(result.parts[0].reviewFlags.includes("数量按 1 片"));
+  assert.equal(result.parts[1].width, 300);
+  assert.equal(result.parts[1].quantity, 24);
 });
 
 test("支持同一行连续写多个条子料规格", () => {
