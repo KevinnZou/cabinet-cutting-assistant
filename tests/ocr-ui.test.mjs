@@ -20,9 +20,12 @@ test("OCR 前端流程优先使用 PaddleOCR 并保留开放免费接口兜底",
   assert.match(script, /PADDLE_OCR_MODULE_URL/);
   assert.match(script, /PaddleOCR\.create/);
   assert.match(script, /worker: false/);
+  assert.match(script, /lang: "ch"/);
   assert.match(script, /ocrVersion: "PP-OCRv6"/);
-  assert.match(script, /ocr-utils\.js\?v=20260813-1/);
+  assert.match(script, /ocr-utils\.js\?v=20260830-1/);
   assert.match(script, /cdn\.jsdelivr\.net\/npm\/@paddleocr\/paddleocr-js@0\.4\.2\/\+esm/);
+  assert.match(script, /onnxruntime-web@1\.26\.0\/dist/);
+  assert.match(script, /paddleReady = null/);
   assert.match(script, /https:\/\/api\.ocr\.space\/parse\/image/);
   assert.match(script, /OCR_SPACE_DEMO_KEY = "helloworld"/);
   assert.match(script, /language", "chs"/);
@@ -36,7 +39,7 @@ test("保留独立 OCR 测试台对比多种识别方案", async () => {
   ]);
 
   assert.match(labHtml, /OCR 测试台/);
-  assert.match(labHtml, /script\.js\?v=20260813-1/);
+  assert.match(labHtml, /script\.js\?v=20260830-1/);
   assert.match(labHtml, /id="image-input"/);
   assert.match(labScript, /PaddleOCR 本地/);
   assert.match(labScript, /Tesseract\.js 本地/);
@@ -46,8 +49,11 @@ test("保留独立 OCR 测试台对比多种识别方案", async () => {
   assert.match(labScript, /PaddleOCR\.create/);
   assert.match(labScript, /cdn\.jsdelivr\.net\/npm\/@paddleocr\/paddleocr-js@0\.4\.2\/\+esm/);
   assert.match(labScript, /worker: false/);
+  assert.match(labScript, /lang: "ch"/);
   assert.match(labScript, /ocrVersion: "PP-OCRv6"/);
-  assert.match(labScript, /ocr-utils\.js\?v=20260813-1/);
+  assert.match(labScript, /ocr-utils\.js\?v=20260830-1/);
+  assert.match(labScript, /onnxruntime-web@1\.26\.0\/dist/);
+  assert.match(labScript, /paddleReady = null/);
   assert.match(labScript, /tesseract\.js@5/);
 });
 

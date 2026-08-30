@@ -86,8 +86,8 @@ test("应用提供浏览器标签页图标并更新缓存版本", async () => {
   ]);
 
   assert.match(html, /rel="icon"/);
-  assert.match(html, /favicon\.svg\?v=20260813-1/);
-  assert.match(html, /app\.js\?v=20260813-1/);
+  assert.match(html, /favicon\.svg\?v=20260830-1/);
+  assert.match(html, /app\.js\?v=20260830-1/);
   assert.match(icon, /#14271e/);
   assert.match(icon, /#c5ec56/);
 });
@@ -129,8 +129,8 @@ test("板件复核表支持逐行查看原文和字段判断来源", async () =>
     readFile(new URL("../public/app/parser.js", import.meta.url), "utf8"),
   ]);
 
-  assert.match(html, /20260813-1/);
-  assert.match(script, /parser\.js\?v=20260813-1/);
+  assert.match(html, /20260830-1/);
+  assert.match(script, /parser\.js\?v=20260830-1/);
   assert.match(script, /data-action="toggle-source"/);
   assert.match(script, /原文明确/);
   assert.match(script, /上下文继承/);
@@ -138,4 +138,12 @@ test("板件复核表支持逐行查看原文和字段判断来源", async () =>
   assert.match(script, /确认本行无误/);
   assert.match(parser, /provenance:/);
   assert.match(parser, /sourceLine/);
+});
+
+test("切换或新建项目时清理输入区临时状态", async () => {
+  const script = await readFile(new URL("../public/app/app.js", import.meta.url), "utf8");
+
+  assert.match(script, /function resetProjectTransientUi/);
+  assert.match(script, /elements\.rawInput\.value = ""/);
+  assert.match(script, /resetProjectTransientUi\(\);\n  renderAll\(\);/);
 });

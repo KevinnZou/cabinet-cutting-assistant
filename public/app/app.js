@@ -6,7 +6,7 @@ import {
   normalizeSettings,
   optimizeCutting,
 } from "./optimizer.js";
-import { createParserExampleByType, parsePartsText } from "./parser.js?v=20260813-1";
+import { createParserExampleByType, parsePartsText } from "./parser.js?v=20260830-1";
 import {
   createCalculationBaseline,
   createProductionVersion,
@@ -31,12 +31,12 @@ import {
   createQuoteVersion,
   normalizePriceBook,
 } from "./pricing.js";
-import { extractPaddleText, normalizeOcrText } from "./ocr-utils.js?v=20260813-1";
+import { extractPaddleText, normalizeOcrText } from "./ocr-utils.js?v=20260830-1";
 
 const OCR_SPACE_ENDPOINT = "https://api.ocr.space/parse/image";
 const OCR_SPACE_DEMO_KEY = "helloworld";
 const PADDLE_OCR_MODULE_URL = "https://cdn.jsdelivr.net/npm/@paddleocr/paddleocr-js@0.4.2/+esm";
-const ONNXRUNTIME_WASM_PATH = "https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/";
+const ONNXRUNTIME_WASM_PATH = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.26.0/dist/";
 const COLOR_PALETTE = ["#c5ec56", "#93c6a8", "#f0bc62", "#8fb8e8", "#d6a6e8", "#e7987f", "#aabf77"];
 const EDGE_PRESETS = [
   { value: "1/0", label: "单边", edgeLong: 1, edgeShort: 0 },
@@ -241,6 +241,15 @@ function setOcrStatus(message) {
   if (elements.ocrStatus) elements.ocrStatus.textContent = message;
 }
 
+function resetProjectTransientUi() {
+  if (elements.rawInput) elements.rawInput.value = "";
+  if (elements.parseFeedback) {
+    elements.parseFeedback.textContent = "粘贴后点击解析，系统会先生成可编辑清单。";
+    elements.parseFeedback.classList.remove("has-warning");
+  }
+  setOcrStatus("优先使用本地 PaddleOCR；加载失败时自动改用 OCR.Space。");
+}
+
 function appendRawInput(text) {
   const cleanText = text.trim();
   if (!cleanText) return;
@@ -340,6 +349,7 @@ function switchProject(projectId) {
   selectedPartIds.clear();
   lastResult = null;
   lastQuotation = null;
+  resetProjectTransientUi();
   renderAll();
   persistWorkspace(workspace);
 }
@@ -363,6 +373,7 @@ function closeProjectTab(projectId) {
       selectedPartIds.clear();
       lastResult = null;
       lastQuotation = null;
+      resetProjectTransientUi();
       renderAll();
     }
   } else {
@@ -881,10 +892,11 @@ async function initPaddleOcr() {
   if (paddleReady) return paddleReady;
   paddleReady = (async () => {
     const module = await import(PADDLE_OCR_MODULE_URL);
-    const factory = module?.PaddleOCR?.create || module?.default?.PaddleOCR?.create;
+    const factory = module?.PaddleOCR?.create || module?.default?.create || module?.default?.PaddleOCR?.create;
     if (!factory) throw new Error("PaddleOCR.js 模块没有暴露 PaddleOCR.create");
     paddleOcr = await factory({
       ocrVersion: "PP-OCRv6",
+      lang: "ch",
       worker: false,
       ortOptions: {
         backend: "wasm",
@@ -894,7 +906,13 @@ async function initPaddleOcr() {
       },
     });
   })();
-  return paddleReady;
+  try {
+    return await paddleReady;
+  } catch (error) {
+    paddleReady = null;
+    paddleOcr = null;
+    throw error;
+  }
 }
 
 async function runPaddleOcr(file) {
@@ -1168,6 +1186,7 @@ function createNewProject(overrides = {}) {
   selectedPartIds.clear();
   lastResult = null;
   lastQuotation = null;
+  resetProjectTransientUi();
   renderAll();
   renderProjectList();
   if (elements.newProjectDialog.open) elements.newProjectDialog.close();
@@ -2036,6 +2055,9 @@ async function importProject(file) {
     workspace.activeProjectId = imported.id;
     state = hydrateProject(imported);
     selectedPartIds.clear();
+    lastResult = null;
+    lastQuotation = null;
+    resetProjectTransientUi();
     renderAll();
     saveState({ immediate: true });
     showToast("项目已导入并保存在本机");
@@ -2064,6 +2086,9 @@ async function importAllData(file) {
     persistWorkspace(workspace);
     state = hydrateProject(getActiveProject(workspace) || workspace.projects[0]);
     selectedPartIds.clear();
+    lastResult = null;
+    lastQuotation = null;
+    resetProjectTransientUi();
     renderAll();
     renderProjectList();
     showToast("全部项目与价格档案已恢复");

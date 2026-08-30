@@ -1,10 +1,10 @@
-import { parsePartsText } from "../app/parser.js?v=20260813-1";
-import { extractPaddleText, normalizeOcrText } from "../app/ocr-utils.js?v=20260813-1";
+import { parsePartsText } from "../app/parser.js?v=20260830-1";
+import { extractPaddleText, normalizeOcrText } from "../app/ocr-utils.js?v=20260830-1";
 
 const OCR_SPACE_ENDPOINT = "https://api.ocr.space/parse/image";
 const OCR_SPACE_DEMO_KEY = "helloworld";
 const PADDLE_OCR_MODULE_URL = "https://cdn.jsdelivr.net/npm/@paddleocr/paddleocr-js@0.4.2/+esm";
-const ONNXRUNTIME_WASM_PATH = "https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/";
+const ONNXRUNTIME_WASM_PATH = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.26.0/dist/";
 
 const engines = [
   {
@@ -152,12 +152,13 @@ async function initPaddle() {
   if (paddleReady) return paddleReady;
   paddleReady = (async () => {
     const module = await import(PADDLE_OCR_MODULE_URL);
-    const factory = module?.PaddleOCR?.create || module?.default?.PaddleOCR?.create;
+    const factory = module?.PaddleOCR?.create || module?.default?.create || module?.default?.PaddleOCR?.create;
     if (!factory) {
       throw new Error("官方 PaddleOCR.js 包没有暴露 PaddleOCR.create");
     }
     paddleOcr = await factory({
       ocrVersion: "PP-OCRv6",
+      lang: "ch",
       worker: false,
       ortOptions: {
         backend: "wasm",
@@ -167,7 +168,13 @@ async function initPaddle() {
       },
     });
   })();
-  return paddleReady;
+  try {
+    return await paddleReady;
+  } catch (error) {
+    paddleReady = null;
+    paddleOcr = null;
+    throw error;
+  }
 }
 
 async function runPaddle(dataUrl) {
