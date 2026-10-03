@@ -87,7 +87,7 @@ test("应用提供浏览器标签页图标并更新缓存版本", async () => {
 
   assert.match(html, /rel="icon"/);
   assert.match(html, /favicon\.svg\?v=20260830-1/);
-  assert.match(html, /app\.js\?v=20260830-1/);
+  assert.match(html, /app\.js\?v=20261003-1/);
   assert.match(icon, /#14271e/);
   assert.match(icon, /#c5ec56/);
 });
@@ -140,10 +140,11 @@ test("板件复核表支持逐行查看原文和字段判断来源", async () =>
   assert.match(parser, /sourceLine/);
 });
 
-test("切换或新建项目时清理输入区临时状态", async () => {
+test("项目切换恢复独立草稿并清理异步任务", async () => {
   const script = await readFile(new URL("../public/app/app.js", import.meta.url), "utf8");
 
   assert.match(script, /function resetProjectTransientUi/);
-  assert.match(script, /elements\.rawInput\.value = ""/);
+  assert.match(script, /elements\.rawInput\.value = state\.inputDraft \|\| ""/);
+  assert.match(script, /operations\.cancelAll\(\)/);
   assert.match(script, /resetProjectTransientUi\(\);\n  renderAll\(\);/);
 });

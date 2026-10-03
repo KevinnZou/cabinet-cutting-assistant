@@ -1,0 +1,20 @@
+{
+  "name": "cabinet-cutting-assistant",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build-ocr.mjs",
+    "dev": "python3 -m http.server 8000 --bind 127.0.0.1 --directory public",
+    "test": "node --test tests/*.mjs",
+    "test:browser": "node --test tests/browser/*.test.mjs",
+    "test:ocr": "node scripts/smoke-ocr.mjs"
+  },
+  "dependencies": {
+    "@paddleocr/paddleocr-js": "0.4.2",
+    "onnxruntime-web": "1.24.3"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "playwright": "1.62.1"
+  }
+}

@@ -1,6 +1,21 @@
 export const WORKSPACE_STORAGE_KEY = "cabinet-cutting-assistant:workspace:v3";
 export const LEGACY_STORAGE_KEY = "cabinet-cutting-assistant:project:v1";
 export const MAX_PROJECT_SNAPSHOTS = 20;
+const DEFAULT_PRICE_BOOK = {
+  version: 1,
+  materialPrices: {},
+  edgeTapeCostPerMeter: 0.8,
+  edgeTapeSalePerMeter: 1.2,
+  cuttingCostPerSheet: 10,
+  cuttingSalePerSheet: 15,
+  edgeProcessCostPerMeter: 1.5,
+  edgeProcessSalePerMeter: 2.5,
+  deliveryCost: 0,
+  deliverySale: 0,
+  otherCost: 0,
+  otherSale: 0,
+  taxRate: 0,
+};
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -25,8 +40,8 @@ function normalizeOpenProjectIds(workspace) {
     ? workspace.activeProjectId
     : [...availableIds][0] || "";
   const openIds = [
-    activeId,
     ...(Array.isArray(workspace.openProjectIds) ? workspace.openProjectIds : []),
+    activeId,
   ].filter((id, index, ids) => id && availableIds.has(id) && ids.indexOf(id) === index);
   return openIds.length ? openIds : activeId ? [activeId] : [];
 }
@@ -77,21 +92,7 @@ export function createWorkspace(initialProject) {
     activeProjectId: project.id,
     openProjectIds: [project.id],
     projects: [project],
-    priceBook: {
-      version: 1,
-      materialPrices: {},
-      edgeTapeCostPerMeter: 0.8,
-      edgeTapeSalePerMeter: 1.2,
-      cuttingCostPerSheet: 10,
-      cuttingSalePerSheet: 15,
-      edgeProcessCostPerMeter: 1.5,
-      edgeProcessSalePerMeter: 2.5,
-      deliveryCost: 0,
-      deliverySale: 0,
-      otherCost: 0,
-      otherSale: 0,
-      taxRate: 0,
-    },
+    priceBook: clone(DEFAULT_PRICE_BOOK),
     updatedAt: now(),
   };
 }
@@ -102,14 +103,7 @@ export function loadWorkspace(initialProject) {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (parsed?.version === 3 && Array.isArray(parsed.projects)) {
-        parsed.projects = parsed.projects.map((project) =>
-          createProjectRecord(project),
-        );
-        if (!parsed.projects.some((project) => project.id === parsed.activeProjectId)) {
-          parsed.activeProjectId = parsed.projects.find((project) => !project.deletedAt)?.id || "";
-        }
-        parsed.openProjectIds = normalizeOpenProjectIds(parsed);
-        return parsed;
+        return importWorkspace(parsed);
       }
     }
 
@@ -135,7 +129,7 @@ export function persistWorkspace(workspace) {
 }
 
 export function getActiveProject(workspace) {
-  return workspace.projects.find((project) => project.id === workspace.activeProjectId) || null;
+  return workspace.projects.find((project) => project.id === workspace.activeProjectId && !project.deletedAt) || null;
 }
 
 export function upsertProject(workspace, project) {
@@ -158,6 +152,7 @@ export function createSnapshot(project, reason, snapshotState = project) {
       status: snapshotState.status,
       deliveryDate: snapshotState.deliveryDate,
       projectNotes: snapshotState.projectNotes,
+      inputDraft: snapshotState.inputDraft || "",
       settings: snapshotState.settings,
       materialRules: snapshotState.materialRules,
       parts: snapshotState.parts,
@@ -202,7 +197,7 @@ export function duplicateProject(workspace, projectId) {
   });
   workspace.projects.unshift(copy);
   workspace.activeProjectId = copy.id;
-  workspace.openProjectIds = [copy.id, ...normalizeOpenProjectIds(workspace)];
+  workspace.openProjectIds = normalizeOpenProjectIds(workspace);
   return copy;
 }
 
@@ -218,18 +213,63 @@ export function exportWorkspace(workspace) {
   );
 }
 
+export function validateImportedProject(project) {
+  const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+  const validParts = (parts) => Array.isArray(parts) && parts.every((part) =>
+    isRecord(part) && (part.reviewFlags == null || Array.isArray(part.reviewFlags)));
+  if (!isRecord(project) || !validParts(project.parts) ||
+      (project.id != null && typeof project.id !== "string")) {
+    throw new Error("备份文件包含无效项目或板件");
+  }
+  for (const field of ["snapshots", "quoteVersions", "productionVersions"]) {
+    if (project[field] != null && (!Array.isArray(project[field]) || !project[field].every(isRecord))) {
+      throw new Error("备份文件包含无效历史版本");
+    }
+  }
+  if (project.snapshots?.some((snapshot) => !isRecord(snapshot.data) || !validParts(snapshot.data.parts))) {
+    throw new Error("备份文件包含无效历史板件");
+  }
+}
+
 export function importWorkspace(content) {
   const parsed = typeof content === "string" ? JSON.parse(content) : content;
   const workspace = parsed?.workspace || parsed;
-  if (!workspace || !Array.isArray(workspace.projects)) {
-    throw new Error("invalid workspace");
+  if (!workspace || !Array.isArray(workspace.projects) || !workspace.projects.length) {
+    throw new Error("备份文件没有项目");
   }
-  return {
+  const ids = new Set();
+  for (const project of workspace.projects) {
+    validateImportedProject(project);
+    if (project.id && ids.has(project.id)) {
+      throw new Error("备份文件包含无效或重复的项目");
+    }
+    if (project.id) ids.add(project.id);
+  }
+  const projects = workspace.projects.map((project) => createProjectRecord(project));
+  if (!projects.some((project) => !project.deletedAt)) {
+    throw new Error("备份文件没有可打开的项目");
+  }
+  const activeProjectId = projects.some((project) => project.id === workspace.activeProjectId && !project.deletedAt)
+    ? workspace.activeProjectId
+    : projects.find((project) => !project.deletedAt).id;
+  const priceBook = workspace.priceBook && typeof workspace.priceBook === "object" && !Array.isArray(workspace.priceBook)
+    ? workspace.priceBook
+    : {};
+  const normalized = {
     ...workspace,
     version: 3,
-    projects: workspace.projects.map((project) => createProjectRecord(project)),
-    openProjectIds: normalizeOpenProjectIds(workspace),
+    activeProjectId,
+    projects,
+    priceBook: {
+      ...clone(DEFAULT_PRICE_BOOK),
+      ...priceBook,
+      materialPrices: priceBook.materialPrices && typeof priceBook.materialPrices === "object" && !Array.isArray(priceBook.materialPrices)
+        ? priceBook.materialPrices
+        : {},
+    },
   };
+  normalized.openProjectIds = normalizeOpenProjectIds(normalized);
+  return normalized;
 }
 
 export function formatProjectStatus(status) {

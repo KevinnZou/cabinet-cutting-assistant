@@ -10,6 +10,7 @@ import { createParserExampleByType, parsePartsText } from "./parser.js?v=2026083
 import {
   createCalculationBaseline,
   createProductionVersion,
+  calculationSignature,
   diffCalculationInputs,
   isCalculationCurrent,
 } from "./calculation-state.js";
@@ -21,6 +22,7 @@ import {
   formatProjectStatus,
   getActiveProject,
   importWorkspace,
+  validateImportedProject,
   loadWorkspace,
   persistWorkspace,
   restoreSnapshot,
@@ -31,12 +33,9 @@ import {
   createQuoteVersion,
   normalizePriceBook,
 } from "./pricing.js";
-import { extractPaddleText, normalizeOcrText } from "./ocr-utils.js?v=20260830-1";
+import { createPaddleClient, recognizeOnline } from "./ocr-client.js?v=20261003-1";
+import { createOperationManager } from "./operation-state.js";
 
-const OCR_SPACE_ENDPOINT = "https://api.ocr.space/parse/image";
-const OCR_SPACE_DEMO_KEY = "helloworld";
-const PADDLE_OCR_MODULE_URL = "https://cdn.jsdelivr.net/npm/@paddleocr/paddleocr-js@0.4.2/+esm";
-const ONNXRUNTIME_WASM_PATH = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.26.0/dist/";
 const COLOR_PALETTE = ["#c5ec56", "#93c6a8", "#f0bc62", "#8fb8e8", "#d6a6e8", "#e7987f", "#aabf77"];
 const EDGE_PRESETS = [
   { value: "1/0", label: "单边", edgeLong: 1, edgeShort: 0 },
@@ -92,8 +91,10 @@ const elements = {
   appendParse: document.getElementById("append-parse"),
   parseFeedback: document.getElementById("parse-feedback"),
   ocrButton: document.getElementById("ocr-button"),
+  cancelOcrButton: document.getElementById("cancel-ocr-button"),
   ocrFile: document.getElementById("ocr-file"),
   ocrStatus: document.getElementById("ocr-status"),
+  cloudOcrConsent: document.getElementById("cloud-ocr-consent"),
   resultQuality: document.getElementById("result-quality"),
   resultFilterBar: document.getElementById("result-filter-bar"),
   resultMaterialFilter: document.getElementById("result-material-filter"),
@@ -165,6 +166,7 @@ function createInitialState() {
     status: "draft",
     deliveryDate: "",
     projectNotes: "",
+    inputDraft: "",
     pricing: { discount: 0, leftoverOwnership: "customer", note: "" },
     snapshots: [],
     quoteVersions: [],
@@ -211,10 +213,11 @@ let lastResult = null;
 let lastQuotation = null;
 let saveTimer = null;
 let toastTimer = null;
-let calculationWorker = null;
 let selectedPartIds = new Set();
-let paddleReady = null;
-let paddleOcr = null;
+const paddleClient = createPaddleClient();
+const operations = createOperationManager();
+const projectResults = new Map();
+let activeCalculation = null;
 
 function escapeHtml(value) {
   return String(value)
@@ -242,12 +245,21 @@ function setOcrStatus(message) {
 }
 
 function resetProjectTransientUi() {
-  if (elements.rawInput) elements.rawInput.value = "";
+  operations.cancelAll();
+  activeCalculation = null;
+  elements.ocrButton.disabled = false;
+  elements.ocrButton.textContent = "上传图片 OCR";
+  elements.cancelOcrButton.hidden = true;
+  elements.ocrFile.value = "";
+  elements.calculateButton.disabled = false;
+  elements.calculateButton.querySelector("span").textContent = "开始排版计算";
+  if (elements.rawInput) elements.rawInput.value = state.inputDraft || "";
+  if (elements.appendParse) elements.appendParse.checked = false;
   if (elements.parseFeedback) {
     elements.parseFeedback.textContent = "粘贴后点击解析，系统会先生成可编辑清单。";
     elements.parseFeedback.classList.remove("has-warning");
   }
-  setOcrStatus("优先使用本地 PaddleOCR；加载失败时自动改用 OCR.Space。");
+  setOcrStatus("优先在本机识别；勾选下方选项后，本地失败时才会上传图片在线识别。");
 }
 
 function appendRawInput(text) {
@@ -255,6 +267,8 @@ function appendRawInput(text) {
   if (!cleanText) return;
   const current = elements.rawInput.value.trim();
   elements.rawInput.value = current ? `${current}\n\n${cleanText}` : cleanText;
+  state.inputDraft = elements.rawInput.value;
+  saveState();
   elements.rawInput.focus();
 }
 
@@ -270,7 +284,7 @@ function saveState({ immediate = false } = {}) {
       elements.saveStatus.textContent = "已保存到本机";
       renderProjectTabs();
     } catch {
-      elements.saveStatus.textContent = "浏览器阻止了本地保存";
+      elements.saveStatus.textContent = "保存失败，请备份数据并检查浏览器空间";
     }
   };
 
@@ -290,8 +304,8 @@ function normalizeOpenProjectIds() {
   const availableIds = activeProjectIds();
   const activeId = availableIds.has(state.id) ? state.id : workspace.activeProjectId;
   workspace.openProjectIds = [
-    activeId,
     ...(Array.isArray(workspace.openProjectIds) ? workspace.openProjectIds : []),
+    activeId,
   ].filter((id, index, ids) => id && availableIds.has(id) && ids.indexOf(id) === index);
   if (!workspace.openProjectIds.length) {
     const next = workspace.projects.find((project) => !project.deletedAt);
@@ -303,9 +317,10 @@ function openProjectTab(projectId) {
   const project = workspace.projects.find((item) => item.id === projectId && !item.deletedAt);
   if (!project) return;
   normalizeOpenProjectIds();
+  if (workspace.openProjectIds.includes(projectId)) return;
   workspace.openProjectIds = [
-    projectId,
     ...workspace.openProjectIds.filter((id) => id !== projectId),
+    projectId,
   ];
 }
 
@@ -335,6 +350,7 @@ function saveSnapshot(reason) {
   state = upsertProject(workspace, state);
   persistWorkspace(workspace);
   renderHistory();
+  renderProjectTabs();
 }
 
 function switchProject(projectId) {
@@ -611,12 +627,12 @@ function renderParts() {
             </td>
             <td data-label="长 × 宽（mm）">
               <div class="size-fields">
-                <input aria-label="板件长度" data-field="length" type="number" min="1" max="10000" step="1" value="${part.length}" />
+                <input aria-label="板件长度" data-field="length" type="number" min="1" max="10000" step="1" value="${escapeHtml(part.length)}" />
                 <span>×</span>
-                <input aria-label="板件宽度" data-field="width" type="number" min="1" max="10000" step="1" value="${part.width}" />
+                <input aria-label="板件宽度" data-field="width" type="number" min="1" max="10000" step="1" value="${escapeHtml(part.width)}" />
               </div>
             </td>
-            <td data-label="数量"><input class="quantity-input" aria-label="数量" data-field="quantity" type="number" min="1" max="9999" step="1" value="${part.quantity}" /></td>
+            <td data-label="数量"><input class="quantity-input" aria-label="数量" data-field="quantity" type="number" min="1" max="9999" step="1" value="${escapeHtml(part.quantity)}" /></td>
             <td data-label="木纹"><input class="grain-check" aria-label="锁定木纹方向" data-field="grainLocked" type="checkbox" ${part.grainLocked ? "checked" : ""} /></td>
             <td data-label="封边方式"><select class="edge-select" aria-label="封边方式" data-field="edgePreset">${edgePresetOptions(edgeValueFromPart(part))}</select></td>
             <td data-label="操作"><button class="delete-button" type="button" data-action="delete" aria-label="删除 ${escapeHtml(part.name)}">×</button></td>
@@ -746,6 +762,12 @@ function resetResults() {
 }
 
 function invalidateCalculation(reason = "清单或加工规则已修改") {
+  if (operations.isCurrent("calculation", activeCalculation, state.id)) {
+    operations.cancel("calculation");
+    activeCalculation = null;
+    elements.calculateButton.disabled = false;
+    elements.calculateButton.querySelector("span").textContent = "重新排版计算";
+  }
   if (state.calculationBaseline) {
     state.calculationState = {
       status: "stale",
@@ -780,17 +802,13 @@ function requireCurrentResult(message = "清单或规则已变化，请重新计
 }
 
 function renderParseFeedback(result) {
-  const warnings = result.warnings.slice(0, 3);
-  const coverage = result.stats.lineCount
-    ? Math.round(((result.stats.lineCount - result.warnings.length) / result.stats.lineCount) * 100)
-    : 0;
-  const warningHtml = warnings.length
-    ? `<ul>${warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join("")}</ul>`
+  const warningHtml = result.warnings.length
+    ? `<details class="parse-warning-list" open><summary>${result.warnings.length} 行未解析，请对照原文补录</summary><ul>${result.warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join("")}</ul></details>`
     : "";
   const provenance = result.stats.provenance || {};
   elements.parseFeedback.innerHTML = `
     <strong>已识别 ${result.stats.partTypeCount} 种板件 / ${result.stats.pieceCount} 片${result.stats.materialRuleCount ? ` · ${result.stats.materialRuleCount} 条余料规则` : ""}</strong>
-    <span>解析覆盖率约 ${coverage}% · 请在下方确认尺寸、颜色、木纹、板件封边和余料规则。</span>
+    <span>共检查 ${result.stats.lineCount} 行；请在下方确认尺寸、颜色、木纹和封边。</span>
     <div class="parse-trace-summary">
       <b>原文明确 ${provenance.explicit || 0}</b>
       <b>上下文继承 ${provenance.inherited || 0}</b>
@@ -798,7 +816,6 @@ function renderParseFeedback(result) {
       <b class="${provenance.default ? "needs-review" : ""}">待确认 ${provenance.default || 0}</b>
     </div>
     ${warningHtml}
-    ${result.warnings.length > warnings.length ? `<small>另有 ${result.warnings.length - warnings.length} 行未展示。</small>` : ""}
   `;
   elements.parseFeedback.classList.toggle("has-warning", result.warnings.length > 0);
 }
@@ -855,19 +872,30 @@ async function recognizeImage(file) {
     return;
   }
 
+  const operation = operations.start("ocr", state.id);
+  const signal = operation.controller.signal;
   elements.ocrButton.disabled = true;
+  elements.cancelOcrButton.hidden = false;
   elements.ocrButton.textContent = "正在识别...";
-  setOcrStatus("正在加载本地 PaddleOCR 模型，首次会慢一些。");
+  setOcrStatus("正在加载本机识别模型，首次使用需要下载模型。");
 
   try {
     let text = "";
     try {
-      text = await runPaddleOcr(file);
-      setOcrStatus("PaddleOCR 本地识别完成，可继续点击“解析到确认表”。");
+      text = await paddleClient.recognize(file, { signal, onProgress: setOcrStatus });
+      if (!operations.isCurrent("ocr", operation, state.id)) return;
+      if (!text) throw new Error("本机模型没有识别到文字");
     } catch (paddleError) {
-      setOcrStatus(`PaddleOCR 加载失败，已切换到 OCR.Space：${paddleError.message || "未知错误"}`);
-      text = await runOcrSpace(file);
+      if (!operations.isCurrent("ocr", operation, state.id)) return;
+      if (!elements.cloudOcrConsent.checked) {
+        setOcrStatus(`本机识别未完成：${paddleError.message || "未知错误"}。可调整图片重试，或勾选在线识别后重试。`);
+        return;
+      }
+      setOcrStatus("本机识别失败，正在将这张图片发送至 OCR.Space 识别。");
+      text = await recognizeOnline(file, { signal });
     }
+
+    if (!operations.isCurrent("ocr", operation, state.id)) return;
 
     if (!text) {
       setOcrStatus("没有识别到文字，可以换一张更清晰、正向的图片再试。");
@@ -876,75 +904,21 @@ async function recognizeImage(file) {
     }
 
     appendRawInput(text);
-    setOcrStatus(`已识别 ${text.length} 个字符，可继续点击“解析到确认表”。`);
+    setOcrStatus(`已识别 ${text.length} 个字符。请核对输入框内容，再解析到确认表。`);
     showToast("OCR 识别完成，文字已放入输入框");
   } catch (error) {
-    setOcrStatus(`识别失败：${error.message || "免费接口暂时不可用，请稍后重试。"}`);
-    showToast("OCR 识别失败，请稍后再试");
+    if (operations.isCurrent("ocr", operation, state.id)) {
+      setOcrStatus(`在线识别失败：${error.message || "服务暂时不可用"}。请改用文字输入或稍后重试。`);
+      showToast("在线 OCR 识别失败");
+    }
   } finally {
-    elements.ocrButton.disabled = false;
-    elements.ocrButton.textContent = "上传图片 OCR";
-    elements.ocrFile.value = "";
+    if (operations.finish("ocr", operation)) {
+      elements.ocrButton.disabled = false;
+      elements.ocrButton.textContent = "上传图片 OCR";
+      elements.cancelOcrButton.hidden = true;
+      elements.ocrFile.value = "";
+    }
   }
-}
-
-async function initPaddleOcr() {
-  if (paddleReady) return paddleReady;
-  paddleReady = (async () => {
-    const module = await import(PADDLE_OCR_MODULE_URL);
-    const factory = module?.PaddleOCR?.create || module?.default?.create || module?.default?.PaddleOCR?.create;
-    if (!factory) throw new Error("PaddleOCR.js 模块没有暴露 PaddleOCR.create");
-    paddleOcr = await factory({
-      ocrVersion: "PP-OCRv6",
-      lang: "ch",
-      worker: false,
-      ortOptions: {
-        backend: "wasm",
-        wasmPaths: ONNXRUNTIME_WASM_PATH,
-        numThreads: 1,
-        simd: false,
-      },
-    });
-  })();
-  try {
-    return await paddleReady;
-  } catch (error) {
-    paddleReady = null;
-    paddleOcr = null;
-    throw error;
-  }
-}
-
-async function runPaddleOcr(file) {
-  await initPaddleOcr();
-  const result = await paddleOcr.predict(file, {
-    textDetLimitSideLen: 2200,
-    textRecScoreThresh: 0.2,
-  });
-  return normalizeOcrText(extractPaddleText(result));
-}
-
-async function runOcrSpace(file) {
-  const formData = new FormData();
-  formData.append("file", file);
-  formData.append("apikey", OCR_SPACE_DEMO_KEY);
-  formData.append("language", "chs");
-  formData.append("OCREngine", "2");
-  formData.append("scale", "true");
-  formData.append("detectOrientation", "true");
-  formData.append("isOverlayRequired", "false");
-  const response = await fetch(OCR_SPACE_ENDPOINT, {
-    method: "POST",
-    body: formData,
-  });
-  if (!response.ok) throw new Error(`OCR request failed: ${response.status}`);
-  const payload = await response.json();
-  const errors = [
-    ...(Array.isArray(payload.ErrorMessage) ? payload.ErrorMessage : payload.ErrorMessage ? [payload.ErrorMessage] : []),
-    ...(Array.isArray(payload.ErrorDetails) ? payload.ErrorDetails : payload.ErrorDetails ? [payload.ErrorDetails] : []),
-  ].filter(Boolean);
-  if (payload.IsErroredOnProcessing || errors.length) throw new Error(errors.join("；") || "OCR processing failed");
-  return normalizeOcrText((payload.ParsedResults || []).map((result) => result.ParsedText || "").join("\n"));
 }
 
 function updateStateFromPartInput(target) {
@@ -1203,6 +1177,7 @@ function handleProjectAction(projectId, action) {
     return;
   }
   if (action === "duplicate") {
+    saveState({ immediate: true });
     const copy = duplicateProject(workspace, projectId);
     persistWorkspace(workspace);
     if (copy) switchProject(copy.id);
@@ -1215,6 +1190,7 @@ function handleProjectAction(projectId, action) {
     project.status = project.status === "archived" ? "draft" : "archived";
   } else if (action === "trash") {
     project.deletedAt = new Date().toISOString();
+    projectResults.delete(project.id);
     workspace.openProjectIds = (workspace.openProjectIds || []).filter((id) => id !== project.id);
     if (project.id === state.id) {
       let next = workspace.projects.find((item) => !item.deletedAt && item.id !== project.id);
@@ -1225,6 +1201,8 @@ function handleProjectAction(projectId, action) {
       workspace.activeProjectId = next.id;
       openProjectTab(next.id);
       state = hydrateProject(next);
+      selectedPartIds.clear();
+      resetProjectTransientUi();
       renderAll();
     }
   } else if (action === "restore") {
@@ -1232,6 +1210,7 @@ function handleProjectAction(projectId, action) {
     project.status = "draft";
   }
   project.updatedAt = new Date().toISOString();
+  if (project.id === state.id) state.status = project.status;
   persistWorkspace(workspace);
   renderProjectTabs();
   renderProjectList();
@@ -1835,37 +1814,37 @@ function renderResults(result) {
   renderResultValidity();
 }
 
-function runOptimizationInWorker(parts, settings) {
+function runOptimizationInWorker(parts, settings, signal) {
+  if (signal.aborted) return Promise.reject(new DOMException("计算已取消", "AbortError"));
   if (!("Worker" in window)) {
     return Promise.resolve(optimizeCutting(parts, settings));
   }
 
-  calculationWorker?.terminate();
-  calculationWorker = new Worker("./optimizer-worker.js?v=20260730-2", { type: "module" });
+  const worker = new Worker("./optimizer-worker.js?v=20260730-2", { type: "module" });
   const requestId = makeId();
 
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      calculationWorker?.terminate();
-      calculationWorker = null;
-      reject(new Error("计算时间过长，请检查板件数量或拆分项目"));
-    }, 90000);
+    let settled = false;
+    const finish = (error, result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      signal.removeEventListener("abort", onAbort);
+      worker.terminate();
+      if (error) reject(error);
+      else resolve(result);
+    };
+    const onAbort = () => finish(new DOMException("计算已取消", "AbortError"));
+    const timeout = setTimeout(() => finish(new Error("计算时间过长，请检查板件数量或拆分项目")), 90000);
+    signal.addEventListener("abort", onAbort, { once: true });
 
-    calculationWorker.addEventListener("message", (event) => {
+    worker.addEventListener("message", (event) => {
       if (event.data?.requestId !== requestId) return;
-      clearTimeout(timeout);
-      calculationWorker?.terminate();
-      calculationWorker = null;
-      if (event.data.error) reject(new Error(event.data.error));
-      else resolve(event.data.result);
+      if (event.data.error) finish(new Error(event.data.error));
+      else finish(null, event.data.result);
     });
-    calculationWorker.addEventListener("error", () => {
-      clearTimeout(timeout);
-      calculationWorker?.terminate();
-      calculationWorker = null;
-      reject(new Error("后台计算模块加载失败"));
-    });
-    calculationWorker.postMessage({ requestId, parts, settings });
+    worker.addEventListener("error", () => finish(new Error("后台计算模块加载失败")));
+    worker.postMessage({ requestId, parts, settings });
   });
 }
 
@@ -1887,6 +1866,9 @@ async function calculate() {
   }
 
   const settings = normalizeSettings(state.settings);
+  const inputSignature = calculationSignature(state);
+  const operation = operations.start("calculation", state.id);
+  activeCalculation = operation;
   elements.calculateButton.disabled = true;
   const calculatingText =
     settings.optimizationMode === "aggressive"
@@ -1902,13 +1884,20 @@ async function calculate() {
     const result = await runOptimizationInWorker(state.parts, {
       ...settings,
       materialRules: state.materialRules,
-    });
+    }, operation.controller.signal);
+    if (!operations.isCurrent("calculation", operation, state.id)) return;
+    if (calculationSignature(state) !== inputSignature) {
+      elements.calculateButton.querySelector("span").textContent = "重新排版计算";
+      showToast("清单或规则已变化，请重新计算");
+      return;
+    }
     state.calculationBaseline = createCalculationBaseline(state, result);
     state.calculationState = {
       status: "current",
       calculatedAt: state.calculationBaseline.calculatedAt,
     };
     result.inputSignature = state.calculationBaseline.signature;
+    projectResults.set(state.id, result);
     state.status = "calculated";
     elements.projectStatus.value = state.status;
     renderResults(result);
@@ -1917,10 +1906,14 @@ async function calculate() {
     document.getElementById("results").scrollIntoView({ behavior: "smooth", block: "start" });
     showToast(`计算完成：${result.totals.sheetCount} 张板，封边 ${result.totals.edgeBandOrderMeters} 米`);
   } catch (error) {
+    if (!operations.isCurrent("calculation", operation, state.id)) return;
     elements.calculateButton.querySelector("span").textContent = "重新开始排版";
     showToast(error.message || "计算失败，请检查数据后重试");
   } finally {
-    elements.calculateButton.disabled = false;
+    if (operations.finish("calculation", operation)) {
+      activeCalculation = null;
+      elements.calculateButton.disabled = false;
+    }
   }
 }
 
@@ -2035,7 +2028,7 @@ function exportCsv() {
 async function importProject(file) {
   try {
     const stored = JSON.parse(await file.text());
-    if (!stored || !Array.isArray(stored.parts)) throw new Error("invalid");
+    validateImportedProject(stored);
     const imported = createProjectRecord({
       ...createInitialState(),
       ...stored,
@@ -2051,6 +2044,7 @@ async function importProject(file) {
       snapshots: [],
       quoteVersions: stored.quoteVersions || [],
     });
+    saveState({ immediate: true });
     workspace.projects.unshift(imported);
     workspace.activeProjectId = imported.id;
     state = hydrateProject(imported);
@@ -2081,10 +2075,13 @@ function exportAllData() {
 async function importAllData(file) {
   try {
     const imported = importWorkspace(await file.text());
+    const nextState = hydrateProject(getActiveProject(imported));
     if (!window.confirm(`将恢复 ${imported.projects.length} 个项目并覆盖当前本地数据，是否继续？`)) return;
+    persistWorkspace(imported);
+    clearTimeout(saveTimer);
+    projectResults.clear();
     workspace = imported;
-    persistWorkspace(workspace);
-    state = hydrateProject(getActiveProject(workspace) || workspace.projects[0]);
+    state = nextState;
     selectedPartIds.clear();
     lastResult = null;
     lastQuotation = null;
@@ -2112,6 +2109,8 @@ function renderAll() {
   renderQuoteVersions();
   renderPriceBook();
   resetResults();
+  const cachedResult = projectResults.get(state.id);
+  if (cachedResult) renderResults(cachedResult);
 }
 
 document.getElementById("add-part-button").addEventListener("click", () => {
@@ -2137,20 +2136,38 @@ document.getElementById("sample-button").addEventListener("click", () => {
 document.querySelectorAll("[data-parser-example]").forEach((button) => {
   button.addEventListener("click", () => {
     elements.rawInput.value = createParserExampleByType(button.dataset.parserExample);
+    state.inputDraft = elements.rawInput.value;
+    saveState();
     elements.rawInput.focus();
     showToast(`已填入${button.textContent.trim()}示例`);
   });
 });
 
 document.getElementById("clear-raw-button").addEventListener("click", () => {
+  cancelImageRecognition();
   elements.rawInput.value = "";
+  state.inputDraft = "";
+  saveState();
   elements.parseFeedback.textContent = "粘贴后点击解析，系统会先生成可编辑清单。";
   elements.parseFeedback.classList.remove("has-warning");
-  setOcrStatus("优先使用本地 PaddleOCR；加载失败时自动改用 OCR.Space。");
+  setOcrStatus("优先在本机识别；勾选下方选项后，本地失败时才会上传图片在线识别。");
   elements.rawInput.focus();
 });
 
 elements.parseButton.addEventListener("click", parseRawInput);
+elements.rawInput.addEventListener("input", () => {
+  state.inputDraft = elements.rawInput.value;
+  saveState();
+});
+function cancelImageRecognition() {
+  operations.cancel("ocr");
+  elements.ocrButton.disabled = false;
+  elements.ocrButton.textContent = "上传图片 OCR";
+  elements.cancelOcrButton.hidden = true;
+  elements.ocrFile.value = "";
+  setOcrStatus("已取消识别，原有文字保留。");
+}
+elements.cancelOcrButton.addEventListener("click", cancelImageRecognition);
 elements.ocrButton.addEventListener("click", () => elements.ocrFile.click());
 elements.ocrFile.addEventListener("change", () => {
   if (elements.ocrFile.files?.[0]) recognizeImage(elements.ocrFile.files[0]);
@@ -2303,11 +2320,22 @@ elements.projectTabs?.addEventListener("click", (event) => {
   if (tab && tab.dataset.projectTab !== state.id) switchProject(tab.dataset.projectTab);
 });
 elements.projectTabs?.addEventListener("keydown", (event) => {
-  if (!["Enter", " "].includes(event.key)) return;
+  if (event.target.closest("[data-project-tab-close]")) return;
   const tab = event.target.closest("[data-project-tab]");
-  if (!tab || tab.dataset.projectTab === state.id) return;
+  if (!tab) return;
+  if (["ArrowLeft", "ArrowRight"].includes(event.key)) {
+    const tabs = [...elements.projectTabs.querySelectorAll("[data-project-tab]")];
+    const index = tabs.indexOf(tab);
+    const nextIndex = (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+    event.preventDefault();
+    switchProject(tabs[nextIndex].dataset.projectTab);
+    elements.projectTabs.querySelector(`[data-project-tab="${CSS.escape(state.id)}"]`)?.focus();
+    return;
+  }
+  if (!["Enter", " "].includes(event.key) || tab.dataset.projectTab === state.id) return;
   event.preventDefault();
   switchProject(tab.dataset.projectTab);
+  elements.projectTabs.querySelector(`[data-project-tab="${CSS.escape(state.id)}"]`)?.focus();
 });
 document.getElementById("price-book-button").addEventListener("click", () => {
   renderPriceBook();
@@ -2349,6 +2377,7 @@ elements.historyList.addEventListener("click", (event) => {
   if (!window.confirm("恢复后将替换当前板件与设置，是否继续？")) return;
   saveSnapshot("恢复历史版本前");
   state = hydrateProject(restoreSnapshot(state, row.dataset.snapshotId));
+  resetProjectTransientUi();
   state = upsertProject(workspace, state);
   persistWorkspace(workspace);
   selectedPartIds.clear();
@@ -2419,3 +2448,5 @@ document.getElementById("production-order-button").addEventListener("click", () 
 });
 
 renderAll();
+elements.rawInput.value = state.inputDraft || "";
+window.addEventListener("pagehide", () => saveState({ immediate: true }));

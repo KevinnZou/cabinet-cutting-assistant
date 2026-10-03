@@ -10,7 +10,7 @@
     <meta name="theme-color" content="#14271e" />
     <title>开料工作台｜柜体板开料计算助手</title>
     <link rel="icon" type="image/svg+xml" href="./favicon.svg?v=20260830-1" />
-    <link rel="stylesheet" href="./app.css?v=20260830-1" />
+    <link rel="stylesheet" href="./app.css?v=20261003-1" />
   </head>
   <body>
     <header class="topbar">
@@ -19,7 +19,7 @@
         <span><strong>开料助手</strong><small>Cabinet Cutting</small></span>
       </a>
       <div class="topbar-actions">
-        <span class="local-badge"><i></i> 数据仅保存在本机</span>
+        <span class="local-badge"><i></i> 项目数据保存在本机</span>
         <button class="quiet-button" id="price-book-button" type="button">价格档案</button>
         <a class="quiet-link" href="../intro/">产品介绍</a>
       </div>
@@ -105,8 +105,10 @@
                 <button class="button subtle ocr-button" id="ocr-button" type="button">
                   <span>上传图片 OCR</span>
                 </button>
+                <button class="text-button" id="cancel-ocr-button" type="button" hidden>取消识别</button>
                 <input id="ocr-file" type="file" accept="image/*" hidden />
-                <small id="ocr-status">优先使用本地 PaddleOCR；加载失败时自动改用 OCR.Space。</small>
+                <small id="ocr-status" aria-live="polite">优先在本机识别；勾选下方选项后，本地失败时才会上传图片在线识别。</small>
+                <label class="ocr-cloud-option"><input id="cloud-ocr-consent" type="checkbox" /><span>本机识别失败时，允许将图片发送至 OCR.Space</span></label>
               </div>
             </div>
             <textarea
@@ -462,6 +464,6 @@
       </div>
     </dialog>
 
-    <script type="module" src="./app.js?v=20260830-1"></script>
+    <script type="module" src="./app.js?v=20261003-1"></script>
   </body>
 </html>

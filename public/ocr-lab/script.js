@@ -1,10 +1,7 @@
 import { parsePartsText } from "../app/parser.js?v=20260830-1";
-import { extractPaddleText, normalizeOcrText } from "../app/ocr-utils.js?v=20260830-1";
+import { normalizeOcrText } from "../app/ocr-utils.js?v=20261003-1";
+import { createPaddleClient, recognizeOnline } from "../app/ocr-client.js?v=20261003-1";
 
-const OCR_SPACE_ENDPOINT = "https://api.ocr.space/parse/image";
-const OCR_SPACE_DEMO_KEY = "helloworld";
-const PADDLE_OCR_MODULE_URL = "https://cdn.jsdelivr.net/npm/@paddleocr/paddleocr-js@0.4.2/+esm";
-const ONNXRUNTIME_WASM_PATH = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.26.0/dist/";
 
 const engines = [
   {
@@ -22,7 +19,7 @@ const engines = [
   {
     id: "ocrspace",
     name: "OCR.space 接口",
-    note: "当前正式应用使用的免费接口，图片会发送到第三方服务。",
+    note: "在线对照接口，图片会发送到第三方服务。",
     run: runOcrSpace,
   },
 ];
@@ -41,8 +38,7 @@ const elements = {
 let selectedFile = null;
 let selectedDataUrl = "";
 let preparedDataUrl = "";
-let paddleReady = null;
-let paddleOcr = null;
+const paddleClient = createPaddleClient();
 
 function loadScript(src, globalCheck) {
   return new Promise((resolve, reject) => {
@@ -148,43 +144,9 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
-async function initPaddle() {
-  if (paddleReady) return paddleReady;
-  paddleReady = (async () => {
-    const module = await import(PADDLE_OCR_MODULE_URL);
-    const factory = module?.PaddleOCR?.create || module?.default?.create || module?.default?.PaddleOCR?.create;
-    if (!factory) {
-      throw new Error("官方 PaddleOCR.js 包没有暴露 PaddleOCR.create");
-    }
-    paddleOcr = await factory({
-      ocrVersion: "PP-OCRv6",
-      lang: "ch",
-      worker: false,
-      ortOptions: {
-        backend: "wasm",
-        wasmPaths: ONNXRUNTIME_WASM_PATH,
-        numThreads: 1,
-        simd: false,
-      },
-    });
-  })();
-  try {
-    return await paddleReady;
-  } catch (error) {
-    paddleReady = null;
-    paddleOcr = null;
-    throw error;
-  }
-}
-
-async function runPaddle(dataUrl) {
-  await initPaddle();
+async function runPaddle(dataUrl, progress) {
   const blob = await fetch(dataUrl).then((response) => response.blob());
-  const [result] = await paddleOcr.predict(blob, {
-    textDetLimitSideLen: 2200,
-    textRecScoreThresh: 0.2,
-  });
-  return normalizeOcrText(extractPaddleText(result));
+  return paddleClient.recognize(blob, { onProgress: progress });
 }
 
 async function runTesseract(dataUrl, progress) {
@@ -201,22 +163,7 @@ async function runTesseract(dataUrl, progress) {
 
 async function runOcrSpace(dataUrl) {
   const blob = await fetch(dataUrl).then((response) => response.blob());
-  const formData = new FormData();
-  formData.append("apikey", OCR_SPACE_DEMO_KEY);
-  formData.append("language", "chs");
-  formData.append("OCREngine", "2");
-  formData.append("scale", "true");
-  formData.append("isTable", "true");
-  formData.append("file", blob, selectedFile?.name || "ocr-test.jpg");
-  const response = await fetch(OCR_SPACE_ENDPOINT, { method: "POST", body: formData });
-  if (!response.ok) throw new Error(`OCR.space 请求失败：${response.status}`);
-  const payload = await response.json();
-  const errors = [
-    ...(Array.isArray(payload.ErrorMessage) ? payload.ErrorMessage : payload.ErrorMessage ? [payload.ErrorMessage] : []),
-    ...(Array.isArray(payload.ErrorDetails) ? payload.ErrorDetails : payload.ErrorDetails ? [payload.ErrorDetails] : []),
-  ].filter(Boolean);
-  if (payload.IsErroredOnProcessing || errors.length) throw new Error(errors.join("；") || "OCR.space 处理失败");
-  return normalizeOcrText((payload.ParsedResults || []).map((item) => item.ParsedText || "").join("\n"));
+  return recognizeOnline(blob);
 }
 
 async function runEngine(engine, card) {

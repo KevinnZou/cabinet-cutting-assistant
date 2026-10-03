@@ -31,7 +31,7 @@ test("项目工作区支持复制并保持原项目数据隔离", () => {
   assert.notEqual(copy.id, source.id);
   assert.equal(copy.projectName, "项目A - 副本");
   assert.equal(copy.status, "draft");
-  assert.equal(workspace.openProjectIds[0], copy.id);
+  assert.equal(workspace.openProjectIds.at(-1), copy.id);
   copy.parts[0].quantity = 99;
   assert.equal(source.parts[0].quantity, 14);
 });
@@ -74,4 +74,23 @@ test("工作区记录已打开项目标签并从旧数据自动补齐", () => {
   });
 
   assert.deepEqual(restored.openProjectIds, [workspace.activeProjectId]);
+});
+
+test("拒绝空备份、坏板件和重复项目，保留缺失的价格档案默认值", () => {
+  const workspace = createWorkspace(fixture());
+  assert.throws(() => importWorkspace({ projects: [] }), /没有项目/);
+  assert.throws(() => importWorkspace({ projects: [{ id: "bad", parts: null }] }), /无效/);
+  assert.throws(() => importWorkspace({ projects: [workspace.projects[0], workspace.projects[0]] }), /重复/);
+  for (const invalid of [
+    { snapshots: "broken" },
+    { quoteVersions: [null] },
+    { snapshots: [{ data: { parts: [null] } }] },
+    { parts: [{ reviewFlags: "broken" }] },
+  ]) {
+    assert.throws(() => importWorkspace({ projects: [{ ...fixture(), ...invalid }] }), /无效/);
+  }
+
+  const restored = importWorkspace({ projects: workspace.projects, activeProjectId: "missing" });
+  assert.equal(restored.activeProjectId, workspace.activeProjectId);
+  assert.equal(restored.priceBook.cuttingCostPerSheet, 10);
 });

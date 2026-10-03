@@ -65,8 +65,8 @@ function shouldKeepQuantitySeparate(row, entry) {
   const rowHasSize = hasSizeLikeText(rowText);
   const entryHasSize = hasSizeLikeText(entryText);
 
-  if (rowIsRightQuantity && entryHasSize && row.items[0].bounds.top < entry.bounds.top - 8) return true;
-  if (entryIsRightQuantity && rowHasSize && entry.bounds.top < row.top - 8) return true;
+  if (rowIsRightQuantity && entryHasSize && row.items[0].bounds.top < entry.bounds.top - 12) return true;
+  if (entryIsRightQuantity && rowHasSize && entry.bounds.top < row.top - 12) return true;
   return false;
 }
 

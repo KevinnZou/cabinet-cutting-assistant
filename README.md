@@ -11,6 +11,7 @@
 - 本地项目：自动保存在当前浏览器，可导入、导出 JSON
 - 生产输出：导出 CSV 开料清单和打印计算结果
 - 无服务端依赖：计算和数据处理均在当前设备完成
+- 图片 OCR 默认在本机识别；只有勾选在线识别后，本机失败时才会将所选图片发送至 OCR.Space
 
 ## 页面入口
 
@@ -31,17 +32,31 @@
 
 ## 本地预览
 
-网站本体位于 `public`，可直接用任意静态文件服务器预览：
+需要 Node.js 22 或更新版本及 Python 3。首次运行先安装依赖并构建本机 OCR 组件，再启动静态服务器：
 
 ```bash
-python3 -m http.server 8000 --directory public
+npm ci
+npm run build
+npm run dev
 ```
 
 打开 `http://localhost:8000`，首页会进入开料工作台。
 
+OCR 的 SDK、Worker 和 WASM 随网站一起发布，不再运行时从 jsDelivr 加载。首次识别仍需联网下载 Paddle 官方模型；模型加载和图片识别均可取消或在失败后重试。本机识别不会上传图片。在线备用识别需主动勾选，使用 OCR.Space 演示接口，可能受服务额度限制。
+
+修改后可运行（浏览器测试首次需要安装 Chromium）：
+
+```bash
+npm test
+npx playwright install chromium
+npm run test:browser
+```
+
+浏览器回归使用隔离存储，不修改日常浏览器里的项目。已安装 Chrome 时，也可运行 `CHROME_CHANNEL=chrome npm run test:browser`。启动预览后，`npm run test:ocr` 会生成两行测试图片并验证真实 PaddleOCR；此项需联网下载官方模型，不属于离线 CI 测试。预览不在 8000 端口时，通过 `OCR_TEST_URL` 指定完整工作台地址。
+
 ## GitHub Pages
 
-仓库中的 `.github/workflows/deploy-pages.yml` 会在 `main` 分支更新后自动发布整个 `public` 目录。GitHub Pages 的 Source 需要设置为 `GitHub Actions`。
+仓库中的 `.github/workflows/deploy-pages.yml` 会在 `main` 分支更新后安装锁定依赖、构建 OCR 资源、检查 JavaScript 语法并运行单元与浏览器回归测试，通过后才发布整个 `public` 目录。GitHub Pages 的 Source 需要设置为 `GitHub Actions`。生成的 `public/vendor` 不提交到 Git，由本地和 CI 构建。
 
 ## 主要文件
 
